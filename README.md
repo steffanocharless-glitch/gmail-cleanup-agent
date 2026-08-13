@@ -131,6 +131,28 @@ streamlit run app.py
 
 Open the URL Streamlit prints (typically http://localhost:8501).
 
+## Deploying to Streamlit Community Cloud
+
+1. Push this repo to GitHub (`app.py` must stay at repo root - it already is).
+2. Go to https://share.streamlit.io -> **New app** -> pick this repo/branch,
+   set main file path to `app.py`.
+3. Community Cloud has no `.env` file and does not inject secrets as OS
+   environment variables - it only exposes them via `st.secrets`. This
+   project's `src/config.py` already handles both: it reads `os.getenv(...)`
+   first (local dev, `.env`), then falls back to `st.secrets` (Cloud). You
+   don't need to change any code.
+4. In the app's **Settings -> Secrets** on Community Cloud, paste:
+   ```toml
+   COMPOSIO_API_KEY = "..."
+   COMPOSIO_GMAIL_AUTH_CONFIG_ID = "..."
+   GEMINI_API_KEY = "..."
+   GEMINI_MODEL = "gemini-3.6-flash"
+   ```
+   Same keys as `.env.example`; add any of the batching/safety overrides too
+   if you want non-default values on Cloud.
+5. Deploy. First load will show "Not connected" per visitor - each user
+   authenticates their own Gmail account through Composio, same as local.
+
 ## How Dry Run Works
 
 Dry Run is ON by default (`DRY_RUN_DEFAULT=true`, and re-toggleable per

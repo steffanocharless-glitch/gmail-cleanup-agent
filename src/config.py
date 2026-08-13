@@ -99,8 +99,27 @@ DEFAULT_AGE_RULES_DAYS = {
 }
 
 
+def _raw_env(name: str) -> str | None:
+    """Read a config value with Streamlit Community Cloud's st.secrets taking
+    priority (the canonical source when deployed), falling back to the OS
+    environment (.env via python-dotenv, for local dev) when no secrets.toml
+    exists or the key isn't set there."""
+    try:
+        import streamlit as st
+        if name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:  # noqa: BLE001 - no secrets.toml / not running under Streamlit
+        pass
+    return os.getenv(name)
+
+
+def _env_str(name: str, default: str = "") -> str:
+    val = _raw_env(name)
+    return val if val else default
+
+
 def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
+    raw = _raw_env(name)
     if raw is None or raw == "":
         return default
     try:
@@ -110,7 +129,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
+    raw = _raw_env(name)
     if raw is None or raw == "":
         return default
     try:
@@ -120,7 +139,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
+    raw = _raw_env(name)
     if raw is None or raw == "":
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
@@ -148,18 +167,18 @@ class ConfidenceThresholds:
 @dataclass
 class AppConfig:
     # Composio
-    composio_api_key: str = field(default_factory=lambda: os.getenv("COMPOSIO_API_KEY", ""))
+    composio_api_key: str = field(default_factory=lambda: _env_str("COMPOSIO_API_KEY"))
     composio_gmail_auth_config_id: str = field(
-        default_factory=lambda: os.getenv("COMPOSIO_GMAIL_AUTH_CONFIG_ID", "")
+        default_factory=lambda: _env_str("COMPOSIO_GMAIL_AUTH_CONFIG_ID")
     )
     composio_callback_url: str = field(
-        default_factory=lambda: os.getenv("COMPOSIO_CALLBACK_URL", "")
+        default_factory=lambda: _env_str("COMPOSIO_CALLBACK_URL")
     )
 
     # Gemini
-    gemini_api_key: str = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
+    gemini_api_key: str = field(default_factory=lambda: _env_str("GEMINI_API_KEY"))
     gemini_model: str = field(
-        default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+        default_factory=lambda: _env_str("GEMINI_MODEL", "gemini-3.6-flash")
     )
 
     # Batching / rate limits
