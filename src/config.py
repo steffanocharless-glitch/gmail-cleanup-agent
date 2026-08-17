@@ -5,6 +5,7 @@ so nothing is hard-coded elsewhere in the application.
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +13,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Plain stdlib logger, not src.logger.get_logger - that module imports from
+# this one (CLEANUP_LOG_DIR), so using it here would be a circular import.
+_logger = logging.getLogger(__name__)
+_secrets_warning_shown = False
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CLEANUP_LOG_DIR = PROJECT_ROOT / "data" / "cleanup_logs"
@@ -104,12 +110,25 @@ def _raw_env(name: str) -> str | None:
     priority (the canonical source when deployed), falling back to the OS
     environment (.env via python-dotenv, for local dev) when no secrets.toml
     exists or the key isn't set there."""
+    global _secrets_warning_shown
     try:
         import streamlit as st
-        if name in st.secrets:
-            return str(st.secrets[name])
-    except Exception:  # noqa: BLE001 - no secrets.toml / not running under Streamlit
-        pass
+        from streamlit.errors import StreamlitSecretNotFoundError
+
+        try:
+            if name in st.secrets:
+                return str(st.secrets[name])
+        except StreamlitSecretNotFoundError as exc:
+            # Streamlit raises this SAME exception class both when no
+            # secrets.toml exists at all (expected, silent - local dev) and
+            # when one exists but fails to parse (a real bug that must not
+            # be swallowed silently, or it's indistinguishable from "secret
+            # not set"). Only the message text tells them apart.
+            if "no secrets found" not in str(exc).lower() and not _secrets_warning_shown:
+                _logger.warning("st.secrets failed to load (falling back to env vars): %s", exc)
+                _secrets_warning_shown = True
+    except ImportError:
+        pass  # streamlit not installed in this context (e.g. some tooling)
     return os.getenv(name)
 
 

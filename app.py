@@ -347,7 +347,13 @@ def main() -> None:
     problems = config.validate()
     if problems:
         st.error("Missing configuration:\n\n" + "\n".join(f"- {p}" for p in problems))
-        st.info("Copy .env.example to .env and fill in the required values.")
+        st.info(
+            "Local dev: copy .env.example to .env and fill in the values.\n\n"
+            "Streamlit Community Cloud: set them under Manage app -> Settings -> "
+            "Secrets. If you already did and this still shows, your secrets.toml "
+            "likely has a syntax error - check the app's deploy logs for a "
+            "'st.secrets failed to load' warning with the parse error."
+        )
         return
 
     if not st.session_state.identified:
