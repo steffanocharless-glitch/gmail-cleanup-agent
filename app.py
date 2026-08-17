@@ -5,7 +5,6 @@ here uses a shared/pre-existing connection - every session starts unconnected.
 """
 from __future__ import annotations
 
-import uuid
 from collections import Counter
 
 import pandas as pd
@@ -16,6 +15,7 @@ from src.classifier import EmailClassifier
 from src.composio_service import ComposioService, ComposioServiceError
 from src.config import Action, Category, get_config
 from src.gmail_service import GmailService
+from src.identity import derive_user_id
 from src.logger import AuditLogger, get_logger
 
 logger = get_logger(__name__)
@@ -25,7 +25,9 @@ st.set_page_config(page_title="AI Gmail Cleanup Agent", page_icon="📬", layout
 
 def init_state() -> None:
     defaults = {
-        "user_id": str(uuid.uuid4()),
+        "identified": False,
+        "user_id": None,
+        "display_name": None,
         "connected_account_id": None,
         "connection_status": "NOT_CONNECTED",
         "connected_email": None,
@@ -37,6 +39,54 @@ def init_state() -> None:
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
+
+
+def render_signin(config) -> None:
+    st.header("Sign In")
+    st.caption(
+        "Enter a name/email and a personal passcode you choose. Re-entering "
+        "the same pair later (any browser/device) resumes your existing "
+        "Gmail connection - nobody else can reach it without knowing both."
+    )
+    with st.form("signin_form"):
+        identifier = st.text_input("Your name or email")
+        passcode = st.text_input("Personal passcode", type="password")
+        submitted = st.form_submit_button("Continue")
+
+    if not submitted:
+        return
+    if not identifier.strip() or not passcode:
+        st.error("Both fields are required.")
+        return
+
+    user_id = derive_user_id(identifier, passcode)
+    st.session_state.user_id = user_id
+    st.session_state.display_name = identifier.strip()
+    st.session_state.identified = True
+
+    try:
+        composio = ComposioService(config, user_id=user_id)
+        info = composio.get_connection_status()
+        st.session_state.connection_status = info.status
+        st.session_state.connected_account_id = info.connected_account_id
+        st.session_state.connected_email = info.connected_email
+    except ComposioServiceError as exc:
+        st.warning(f"Signed in, but could not check for an existing Gmail connection: {exc}")
+    st.rerun()
+
+
+def render_identity_bar() -> None:
+    col1, col2 = st.columns([5, 1])
+    col1.caption(f"Signed in as **{st.session_state.display_name}**")
+    if col2.button("Sign out"):
+        for key in ("user_id", "display_name", "connected_account_id", "connected_email",
+                    "pending_redirect_url", "scan_result", "cleanup_summary"):
+            st.session_state[key] = None
+        st.session_state.identified = False
+        st.session_state.connection_status = "NOT_CONNECTED"
+        st.session_state.overrides = {}
+        st.session_state.dry_run = True
+        st.rerun()
 
 
 def get_composio() -> ComposioService | None:
@@ -257,7 +307,9 @@ def render_confirmation(recommendations, config, gmail) -> None:
         )
 
     if st.button("Execute Cleanup", type="primary"):
-        audit = AuditLogger(st.session_state.connected_email or st.session_state.user_id)
+        audit = AuditLogger(
+            st.session_state.connected_email or st.session_state.display_name or st.session_state.user_id
+        )
         with st.spinner("Applying actions..."):
             try:
                 summary = execute_cleanup(
@@ -292,6 +344,17 @@ def main() -> None:
     st.title("📬 AI Gmail Cleanup Agent")
     st.caption("Connect your own Gmail account. Nothing is deleted without your explicit confirmation.")
 
+    problems = config.validate()
+    if problems:
+        st.error("Missing configuration:\n\n" + "\n".join(f"- {p}" for p in problems))
+        st.info("Copy .env.example to .env and fill in the required values.")
+        return
+
+    if not st.session_state.identified:
+        render_signin(config)
+        return
+
+    render_identity_bar()
     connected = render_connection_section(config)
     if not connected:
         return
