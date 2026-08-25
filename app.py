@@ -23,6 +23,18 @@ logger = get_logger(__name__)
 
 st.set_page_config(page_title="AI Gmail Cleanup Agent", page_icon="📬", layout="wide")
 
+st.markdown(
+    """
+    <style>
+    #MainMenu, footer, header {visibility: hidden;}
+    .block-container {padding-top: 2rem; padding-bottom: 2rem; max-width: 1100px;}
+    div[data-testid="stCaptionContainer"] {opacity: 0.65;}
+    hr {margin: 0.5rem 0;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def init_state() -> None:
     defaults = {
@@ -44,11 +56,7 @@ def init_state() -> None:
 
 def render_signin(config) -> None:
     st.header("Sign In")
-    st.caption(
-        "Enter a name/email and a personal passcode you choose. Re-entering "
-        "the same pair later (any browser/device) resumes your existing "
-        "Gmail connection - nobody else can reach it without knowing both."
-    )
+    st.caption("Name/email + a passcode you choose - reusing both resumes your Gmail connection.")
     with st.form("signin_form"):
         identifier = st.text_input("Your name or email")
         passcode = st.text_input("Personal passcode", type="password")
@@ -79,11 +87,7 @@ def render_signin(config) -> None:
 def render_identity_bar() -> None:
     col1, col2 = st.columns([5, 1])
     fingerprint = (st.session_state.user_id or "")[:8]
-    col1.caption(
-        f"Signed in as **{st.session_state.display_name}** (id `{fingerprint}`) - "
-        "if this differs from a previous session, your name/passcode was typed "
-        "slightly differently and Gmail will need reconnecting."
-    )
+    col1.caption(f"**{st.session_state.display_name}** · `{fingerprint}`")
     if col2.button("Sign out"):
         for key in ("user_id", "display_name", "connected_account_id", "connected_email",
                     "pending_redirect_url", "scan_result", "cleanup_summary"):
@@ -294,11 +298,7 @@ def ui_group(classification) -> str:
 
 def render_classification_breakdown(recommendations) -> None:
     st.header("3. AI Classification")
-    st.caption(
-        "Banking mail is broken down by Purpose / Context (Transactions, "
-        "Security Alerts, Promotions, ... all under Banking). Everything "
-        "else is grouped into a few coarse buckets."
-    )
+    st.caption("Banking: full Purpose/Context breakdown. Everything else: coarse buckets.")
     counts = Counter(ui_group(r.classification) for r in recommendations)
     df = pd.DataFrame(
         [{"Category": cat, "Count": count} for cat, count in counts.most_common()]
@@ -428,8 +428,8 @@ def main() -> None:
     config = get_config()
     config.dry_run = st.session_state.dry_run
 
-    st.title("📬 AI Gmail Cleanup Agent")
-    st.caption("Connect your own Gmail account. Nothing is deleted without your explicit confirmation.")
+    st.title("Gmail Cleanup Agent")
+    st.caption("Nothing is deleted without your explicit confirmation.")
 
     problems = config.validate()
     if problems:
