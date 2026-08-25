@@ -5,6 +5,7 @@ here uses a shared/pre-existing connection - every session starts unconnected.
 """
 from __future__ import annotations
 
+import subprocess
 from collections import Counter
 from datetime import date, timedelta
 
@@ -15,12 +16,25 @@ import streamlit.components.v1 as components
 from src.cleanup_engine import execute_cleanup, scan_and_classify
 from src.classifier import EmailClassifier
 from src.composio_service import ComposioService, ComposioServiceError
-from src.config import Action, Category, get_config
+from src.config import PROJECT_ROOT, Action, Category, get_config
 from src.gmail_service import GmailService
 from src.identity import derive_user_id
 from src.logger import AuditLogger, get_logger
 
 logger = get_logger(__name__)
+
+
+def _deployed_commit() -> str:
+    """Short git SHA of whatever's actually running - lets us confirm a
+    Streamlit Cloud redeploy picked up the latest push just by looking at
+    the page, without hunting for a build-log panel."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=PROJECT_ROOT, stderr=subprocess.DEVNULL, timeout=3,
+        ).decode().strip()
+    except Exception:  # noqa: BLE001
+        return "unknown"
 
 st.set_page_config(page_title="AI Gmail Cleanup Agent", page_icon="📬", layout="wide")
 
@@ -37,8 +51,8 @@ st.markdown(
         background-color: #06070d;
         background-image:
             linear-gradient(165deg, #0a0d18 0%, #05060c 55%, #070911 100%),
-            repeating-linear-gradient(0deg, rgba(0,229,255,0.035) 0px, rgba(0,229,255,0.035) 1px, transparent 1px, transparent 48px),
-            repeating-linear-gradient(90deg, rgba(0,229,255,0.035) 0px, rgba(0,229,255,0.035) 1px, transparent 1px, transparent 48px);
+            repeating-linear-gradient(0deg, rgba(0,229,255,0.07) 0px, rgba(0,229,255,0.07) 1px, transparent 1px, transparent 48px),
+            repeating-linear-gradient(90deg, rgba(0,229,255,0.07) 0px, rgba(0,229,255,0.07) 1px, transparent 1px, transparent 48px);
         background-attachment: fixed;
         position: relative;
     }
@@ -54,10 +68,10 @@ st.markdown(
         z-index: 0;
         pointer-events: none;
         background:
-            radial-gradient(circle at var(--mx, 50%) var(--my, 30%), rgba(0,229,255,0.16), transparent 26%),
-            radial-gradient(ellipse 60% 40% at 20% 15%, rgba(0,229,255,0.10), transparent 55%),
-            radial-gradient(ellipse 55% 45% at 82% 78%, rgba(139,92,246,0.09), transparent 55%),
-            radial-gradient(ellipse 50% 35% at 55% 95%, rgba(79,70,229,0.07), transparent 60%);
+            radial-gradient(circle at var(--mx, 50%) var(--my, 30%), rgba(0,229,255,0.20), transparent 26%),
+            radial-gradient(ellipse 60% 40% at 20% 15%, rgba(0,229,255,0.15), transparent 55%),
+            radial-gradient(ellipse 55% 45% at 82% 78%, rgba(139,92,246,0.14), transparent 55%),
+            radial-gradient(ellipse 50% 35% at 55% 95%, rgba(79,70,229,0.11), transparent 60%);
         animation: glow-breathe 14s ease-in-out infinite alternate;
     }
     @keyframes glow-breathe {
@@ -130,8 +144,8 @@ st.markdown(
         height: 140vh;
         margin-left: -110vw;
         background-image:
-            repeating-linear-gradient(90deg, rgba(0,229,255,0.14) 0px, rgba(0,229,255,0.14) 1px, transparent 1px, transparent 64px),
-            repeating-linear-gradient(0deg, rgba(0,229,255,0.14) 0px, rgba(0,229,255,0.14) 1px, transparent 1px, transparent 64px);
+            repeating-linear-gradient(90deg, rgba(0,229,255,0.22) 0px, rgba(0,229,255,0.22) 1px, transparent 1px, transparent 64px),
+            repeating-linear-gradient(0deg, rgba(0,229,255,0.22) 0px, rgba(0,229,255,0.22) 1px, transparent 1px, transparent 64px);
         transform: rotateX(72deg);
         transform-origin: bottom center;
         -webkit-mask-image: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.35) 35%, transparent 70%);
@@ -671,7 +685,7 @@ def main() -> None:
     config.dry_run = st.session_state.dry_run
 
     st.title("Gmail Cleanup Agent")
-    st.caption("Nothing is deleted without your explicit confirmation.")
+    st.caption(f"Nothing is deleted without your explicit confirmation. · build `{_deployed_commit()}`")
 
     problems = config.validate()
     if problems:
