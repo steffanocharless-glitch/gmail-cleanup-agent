@@ -40,7 +40,7 @@ st.set_page_config(page_title="AI Gmail Cleanup Agent", page_icon="📬", layout
 st.markdown(
     """
     <style>
-    #MainMenu, footer, header {visibility: hidden;}
+    footer {visibility: hidden;}
     .block-container {padding-top: 2rem; padding-bottom: 2rem; max-width: 1100px;}
     div[data-testid="stCaptionContainer"] {opacity: 0.7;}
     hr {margin: 0.5rem 0; border-color: #cbd5e1;}
