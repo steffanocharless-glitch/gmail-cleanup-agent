@@ -31,6 +31,31 @@ st.markdown(
     div[data-testid="stCaptionContainer"] {opacity: 0.65;}
     hr {margin: 0.5rem 0; border-color: rgba(0,229,255,0.25);}
 
+    div[data-testid="stAppViewContainer"] {
+        background-color: #05070d;
+        background-image:
+            repeating-linear-gradient(0deg, rgba(0,229,255,0.05) 0px, rgba(0,229,255,0.05) 1px, transparent 1px, transparent 48px),
+            repeating-linear-gradient(90deg, rgba(0,229,255,0.05) 0px, rgba(0,229,255,0.05) 1px, transparent 1px, transparent 48px);
+        background-attachment: fixed;
+        position: relative;
+    }
+    div[data-testid="stAppViewContainer"]::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background:
+            radial-gradient(circle at 12% 18%, rgba(0,229,255,0.16), transparent 42%),
+            radial-gradient(circle at 88% 82%, rgba(168,85,247,0.13), transparent 46%);
+        animation: glow-pulse 9s ease-in-out infinite alternate;
+    }
+    @keyframes glow-pulse {
+        from { opacity: 0.55; }
+        to { opacity: 1; }
+    }
+    section.main > div.block-container { position: relative; z-index: 1; }
+
     h1, h2, h3 {
         text-transform: uppercase;
         letter-spacing: 0.08em;
