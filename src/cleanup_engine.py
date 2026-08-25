@@ -16,8 +16,9 @@ def scan_and_classify(
     gmail: GmailService,
     classifier: EmailClassifier,
     config: AppConfig,
+    date_query: str | None = None,
 ) -> ScanResult:
-    emails: list[EmailMetadata] = gmail.fetch_inbox_metadata(config.max_messages_per_scan)
+    emails: list[EmailMetadata] = gmail.fetch_inbox_metadata(config.max_messages_per_scan, query=date_query)
     profile = gmail.get_profile()
 
     rule_hits, needs_gemini = [], []

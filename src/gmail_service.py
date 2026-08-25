@@ -53,22 +53,29 @@ class GmailService:
 
     # ---- Fetching -----------------------------------------------------------
 
-    def fetch_inbox_metadata(self, max_results: int) -> list[EmailMetadata]:
-        """Page through the inbox collecting lightweight metadata only."""
+    def fetch_inbox_metadata(self, max_results: int, query: Optional[str] = None) -> list[EmailMetadata]:
+        """Page through the inbox collecting lightweight metadata only.
+
+        `query` is a raw Gmail search query (e.g. "after:2026/01/01
+        before:2026/02/01") - forwarded as-is to GMAIL_FETCH_EMAILS.
+        """
         collected: list[EmailMetadata] = []
         page_token = None
 
         while len(collected) < max_results:
             batch_size = min(100, max_results - len(collected))
+            arguments = {
+                "label_ids": [INBOX_LABEL],
+                "max_results": batch_size,
+                "page_token": page_token,
+                "include_payload": False,
+                "verbose": True,
+            }
+            if query:
+                arguments["query"] = query
             result = self._composio.execute(
                 "GMAIL_FETCH_EMAILS",
-                arguments={
-                    "label_ids": [INBOX_LABEL],
-                    "max_results": batch_size,
-                    "page_token": page_token,
-                    "include_payload": False,
-                    "verbose": True,
-                },
+                arguments=arguments,
                 connected_account_id=self._connected_account_id,
             )
             messages = result.get("messages", [])

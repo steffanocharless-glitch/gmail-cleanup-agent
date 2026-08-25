@@ -6,6 +6,7 @@ here uses a shared/pre-existing connection - every session starts unconnected.
 from __future__ import annotations
 
 from collections import Counter
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -157,6 +158,32 @@ def render_connection_section(config) -> bool:
     return st.session_state.connection_status == "ACTIVE"
 
 
+_DATE_RANGE_PRESETS = {
+    "All time": None,
+    "Last 7 days": 7,
+    "Last 30 days": 30,
+    "Last 90 days": 90,
+    "Custom range": "custom",
+}
+
+
+def _build_date_query(preset: str, custom_start: date | None, custom_end: date | None) -> str | None:
+    """Gmail search query for the chosen range. `before:` is exclusive, so
+    the end date is bumped by a day to make the selected end date inclusive."""
+    days = _DATE_RANGE_PRESETS[preset]
+    if days is None:
+        return None
+    if days == "custom":
+        if not custom_start or not custom_end:
+            return None
+        start, end = custom_start, custom_end
+    else:
+        end = date.today()
+        start = end - timedelta(days=days)
+    end_exclusive = end + timedelta(days=1)
+    return f"after:{start.strftime('%Y/%m/%d')} before:{end_exclusive.strftime('%Y/%m/%d')}"
+
+
 def render_scan_controls(config) -> None:
     st.header("2. Scan Inbox")
     col1, col2, col3 = st.columns([2, 2, 2])
@@ -173,14 +200,28 @@ def render_scan_controls(config) -> None:
     with col3:
         scan_clicked = st.button("Scan Inbox", type="primary")
 
+    date_col1, date_col2, date_col3 = st.columns([2, 2, 2])
+    with date_col1:
+        date_preset = st.selectbox("Date range", list(_DATE_RANGE_PRESETS.keys()))
+    custom_start = custom_end = None
+    if date_preset == "Custom range":
+        with date_col2:
+            custom_start = st.date_input("From", value=date.today() - timedelta(days=30))
+        with date_col3:
+            custom_end = st.date_input("To", value=date.today())
+
     if scan_clicked:
         config.max_messages_per_scan = int(max_messages)
+        date_query = _build_date_query(date_preset, custom_start, custom_end)
+        if date_preset == "Custom range" and not date_query:
+            st.error("Pick both a From and To date for a custom range.")
+            return
         composio = get_composio()
         gmail = GmailService(composio, st.session_state.connected_account_id)
         classifier = EmailClassifier(config)
         with st.spinner("Fetching metadata and classifying..."):
             try:
-                result = scan_and_classify(gmail, classifier, config)
+                result = scan_and_classify(gmail, classifier, config, date_query=date_query)
                 st.session_state.scan_result = result
                 st.session_state.overrides = {}
                 st.session_state.cleanup_summary = None
