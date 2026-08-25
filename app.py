@@ -29,7 +29,35 @@ st.markdown(
     #MainMenu, footer, header {visibility: hidden;}
     .block-container {padding-top: 2rem; padding-bottom: 2rem; max-width: 1100px;}
     div[data-testid="stCaptionContainer"] {opacity: 0.65;}
-    hr {margin: 0.5rem 0;}
+    hr {margin: 0.5rem 0; border-color: rgba(0,229,255,0.25);}
+
+    h1, h2, h3 {
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        text-shadow: 0 0 12px rgba(0,229,255,0.35);
+    }
+
+    div[data-testid="stMetric"] {
+        background: rgba(0,229,255,0.04);
+        border: 1px solid rgba(0,229,255,0.25);
+        border-radius: 4px;
+        padding: 0.75rem;
+    }
+
+    div.stButton > button, div.stFormSubmitButton > button {
+        border: 1px solid rgba(0,229,255,0.6);
+        box-shadow: 0 0 10px rgba(0,229,255,0.35);
+        transition: box-shadow 0.15s ease;
+    }
+    div.stButton > button:hover, div.stFormSubmitButton > button:hover {
+        box-shadow: 0 0 18px rgba(0,229,255,0.65);
+        border-color: #00e5ff;
+    }
+
+    div[data-testid="stDataFrame"], div[data-testid="stTable"] {
+        border: 1px solid rgba(0,229,255,0.15);
+        border-radius: 4px;
+    }
     </style>
     """,
     unsafe_allow_html=True,
