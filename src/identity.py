@@ -18,5 +18,8 @@ import hashlib
 
 
 def derive_user_id(identifier: str, passcode: str) -> str:
-    raw = f"{identifier.strip().lower()}:{passcode}"
+    """Passcode is trimmed (not lowercased - stays case-sensitive) so a
+    stray leading/trailing space from a mobile keyboard or paste doesn't
+    silently produce a different user_id and force a fresh Gmail OAuth."""
+    raw = f"{identifier.strip().lower()}:{passcode.strip()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()

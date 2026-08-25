@@ -78,7 +78,12 @@ def render_signin(config) -> None:
 
 def render_identity_bar() -> None:
     col1, col2 = st.columns([5, 1])
-    col1.caption(f"Signed in as **{st.session_state.display_name}**")
+    fingerprint = (st.session_state.user_id or "")[:8]
+    col1.caption(
+        f"Signed in as **{st.session_state.display_name}** (id `{fingerprint}`) - "
+        "if this differs from a previous session, your name/passcode was typed "
+        "slightly differently and Gmail will need reconnecting."
+    )
     if col2.button("Sign out"):
         for key in ("user_id", "display_name", "connected_account_id", "connected_email",
                     "pending_redirect_url", "scan_result", "cleanup_summary"):

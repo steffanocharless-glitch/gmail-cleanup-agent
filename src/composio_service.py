@@ -68,14 +68,34 @@ class ComposioService:
         return self._to_connection_info(account)
 
     def get_connection_status(self) -> ConnectionInfo:
-        """Look up the most recent active Gmail connection for this user, if any."""
-        try:
-            accounts = self._client.connected_accounts.list(
-                user_ids=[self.user_id], statuses=["ACTIVE"]
-            )
-        except Exception as exc:  # noqa: BLE001 - surface as no-connection, not a crash
-            logger.warning("connected_accounts.list failed: %s", exc)
-            return ConnectionInfo(connected_account_id=None, status="NOT_CONNECTED")
+        """Look up the most recent active Gmail connection for this user, if any.
+
+        Retries transient lookup failures instead of reporting them as
+        "not connected" - swallowing a network blip into NOT_CONNECTED would
+        send an already-connected user through Google's OAuth consent screen
+        again for no reason."""
+        attempts = max(self._config.gmail_retry_attempts, 1)
+        backoff = self._config.gmail_retry_backoff_seconds
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                accounts = self._client.connected_accounts.list(
+                    user_ids=[self.user_id], statuses=["ACTIVE"]
+                )
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if attempt >= attempts:
+                    raise ComposioServiceError(
+                        f"Could not verify existing Gmail connection after {attempts} attempts: {exc}"
+                    ) from exc
+                sleep_for = backoff * (2 ** (attempt - 1))
+                logger.warning(
+                    "connected_accounts.list attempt %d/%d failed (%s); retrying in %.1fs",
+                    attempt, attempts, exc, sleep_for,
+                )
+                time.sleep(sleep_for)
 
         items = getattr(accounts, "items", accounts) or []
         gmail_accounts = [
