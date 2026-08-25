@@ -11,7 +11,6 @@ from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 from src.cleanup_engine import execute_cleanup, scan_and_classify
 from src.classifier import EmailClassifier
@@ -43,252 +42,23 @@ st.markdown(
     <style>
     #MainMenu, footer, header {visibility: hidden;}
     .block-container {padding-top: 2rem; padding-bottom: 2rem; max-width: 1100px;}
-    div[data-testid="stCaptionContainer"] {opacity: 0.65;}
-    hr {margin: 0.5rem 0; border-color: rgba(0,229,255,0.25);}
-
-    /* Layer 1: base - dimensional dark charcoal, not a flat fill. */
-    div[data-testid="stAppViewContainer"] {
-        background-color: #06070d;
-        background-image:
-            linear-gradient(165deg, #0a0d18 0%, #05060c 55%, #070911 100%),
-            repeating-linear-gradient(0deg, rgba(0,229,255,0.07) 0px, rgba(0,229,255,0.07) 1px, transparent 1px, transparent 48px),
-            repeating-linear-gradient(90deg, rgba(0,229,255,0.07) 0px, rgba(0,229,255,0.07) 1px, transparent 1px, transparent 48px);
-        background-attachment: fixed;
-        position: relative;
-    }
-    /* Layer 2: ambient light zones + the existing cursor glow (unchanged
-       --mx/--my logic - listed first so it renders above the ambient
-       orbs and stays the dominant light source). Restrained cool tones,
-       low opacity, slow opacity-only breathing (no position drift, so it
-       can never fight the cursor glow's own positioning). */
-    div[data-testid="stAppViewContainer"]::before {
-        content: "";
-        position: fixed;
-        inset: 0;
-        z-index: 0;
-        pointer-events: none;
-        background:
-            radial-gradient(circle at var(--mx, 50%) var(--my, 30%), rgba(0,229,255,0.20), transparent 26%),
-            radial-gradient(ellipse 60% 40% at 20% 15%, rgba(0,229,255,0.15), transparent 55%),
-            radial-gradient(ellipse 55% 45% at 82% 78%, rgba(139,92,246,0.14), transparent 55%),
-            radial-gradient(ellipse 50% 35% at 55% 95%, rgba(79,70,229,0.11), transparent 60%);
-        animation: glow-breathe 14s ease-in-out infinite alternate;
-    }
-    @keyframes glow-breathe {
-        from { opacity: 0.75; }
-        to { opacity: 1; }
-    }
-    /* Layer 3: soft edge vignette for depth - static, sits above the glow
-       layer, still below actual content (z-index: 1 below). */
-    div[data-testid="stAppViewContainer"]::after {
-        content: "";
-        position: fixed;
-        inset: 0;
-        z-index: 0;
-        pointer-events: none;
-        box-shadow: inset 0 0 220px 70px rgba(0,0,0,0.5);
-    }
-    /* Layer 4: actual page content, above every decorative layer. */
-    section.main > div.block-container { position: relative; z-index: 1; }
-
-    h1, h2, h3 {
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        text-shadow: 0 0 12px rgba(0,229,255,0.35);
-    }
+    div[data-testid="stCaptionContainer"] {opacity: 0.7;}
+    hr {margin: 0.5rem 0; border-color: #cbd5e1;}
 
     div[data-testid="stMetric"] {
-        background: rgba(0,229,255,0.04);
-        border: 1px solid rgba(0,229,255,0.25);
+        background: #f1f5f9;
+        border: 1px solid #cbd5e1;
         border-radius: 4px;
         padding: 0.75rem;
-        backdrop-filter: blur(6px);
-    }
-
-    div.stButton > button, div.stFormSubmitButton > button {
-        border: 1px solid rgba(0,229,255,0.6);
-        box-shadow: 0 0 10px rgba(0,229,255,0.35);
-        transition: box-shadow 0.15s ease;
-    }
-    div.stButton > button:hover, div.stFormSubmitButton > button:hover {
-        box-shadow: 0 0 18px rgba(0,229,255,0.65);
-        border-color: #00e5ff;
     }
 
     div[data-testid="stDataFrame"], div[data-testid="stTable"] {
-        border: 1px solid rgba(0,229,255,0.15);
+        border: 1px solid #cbd5e1;
         border-radius: 4px;
-        backdrop-filter: blur(6px);
-    }
-
-    /* --- 3D scene: perspective grid, holographic orb, floating shards, HUD ---
-       Real DOM nodes (pseudo-elements can't host multiple 3D children), but
-       negative z-index so it can never paint over Streamlit's own widget
-       divs regardless of where in the DOM this markdown call lands. Reuses
-       the existing --mx/--my custom properties for the orb's parallax -
-       no new mousemove listener. */
-    .bg-scene {
-        position: fixed;
-        inset: 0;
-        z-index: -1;
-        pointer-events: none;
-        overflow: hidden;
-        perspective: 1400px;
-    }
-
-    .bg-grid-plane {
-        position: absolute;
-        left: 50%;
-        bottom: -10%;
-        width: 220vw;
-        height: 140vh;
-        margin-left: -110vw;
-        background-image:
-            repeating-linear-gradient(90deg, rgba(0,229,255,0.22) 0px, rgba(0,229,255,0.22) 1px, transparent 1px, transparent 64px),
-            repeating-linear-gradient(0deg, rgba(0,229,255,0.22) 0px, rgba(0,229,255,0.22) 1px, transparent 1px, transparent 64px);
-        transform: rotateX(72deg);
-        transform-origin: bottom center;
-        -webkit-mask-image: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.35) 35%, transparent 70%);
-        mask-image: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.35) 35%, transparent 70%);
-        opacity: 0.55;
-    }
-
-    .bg-orb-parallax {
-        position: absolute;
-        top: 12%;
-        right: 8%;
-        width: 260px;
-        height: 260px;
-        transform: translate3d(calc((var(--mx, 50vw) - 50vw) * 0.015), calc((var(--my, 30vh) - 30vh) * 0.015), 0);
-        transition: transform 0.5s ease-out;
-        transform-style: preserve-3d;
-    }
-    .bg-orb {
-        position: relative;
-        width: 100%;
-        height: 100%;
-        transform-style: preserve-3d;
-        animation: orb-float 10s ease-in-out infinite alternate;
-    }
-    @keyframes orb-float {
-        from { transform: translateY(0); }
-        to   { transform: translateY(-14px); }
-    }
-    .bg-orb-core {
-        position: absolute;
-        inset: 20%;
-        border-radius: 50%;
-        background: radial-gradient(circle at 35% 30%, rgba(120,220,255,0.55), rgba(80,120,255,0.12) 55%, transparent 75%);
-        box-shadow: 0 0 60px 10px rgba(0,229,255,0.22);
-    }
-    .bg-orb-ring {
-        position: absolute;
-        inset: 0;
-        border-radius: 50%;
-        border: 1px solid rgba(0,229,255,0.35);
-    }
-    .bg-orb-ring.ring2 { border-color: rgba(139,92,246,0.3); }
-    .bg-orb-ring.ring3 { inset: -12%; border-color: rgba(79,70,229,0.28); }
-    .bg-orb-ring.ring1 { animation: ring-spin-1 22s linear infinite; }
-    .bg-orb-ring.ring2 { animation: ring-spin-2 30s linear infinite; }
-    .bg-orb-ring.ring3 { animation: ring-spin-3 38s linear infinite; }
-    @keyframes ring-spin-1 { from { transform: rotateX(75deg) rotateZ(0deg); } to { transform: rotateX(75deg) rotateZ(360deg); } }
-    @keyframes ring-spin-2 { from { transform: rotateX(75deg) rotateZ(60deg); } to { transform: rotateX(75deg) rotateZ(420deg); } }
-    @keyframes ring-spin-3 { from { transform: rotateX(75deg) rotateZ(120deg); } to { transform: rotateX(75deg) rotateZ(480deg); } }
-
-    .bg-shard {
-        position: absolute;
-        border: 1px solid rgba(0,229,255,0.25);
-        border-radius: 6px;
-        background: linear-gradient(135deg, rgba(0,229,255,0.06), rgba(139,92,246,0.04));
-    }
-    .bg-shard.shard1 {
-        width: 120px; height: 80px; top: 22%; left: 8%; opacity: 0.5;
-        animation: shard-float-1 12s ease-in-out infinite alternate;
-    }
-    .bg-shard.shard2 {
-        width: 90px; height: 90px; top: 60%; left: 14%; opacity: 0.4;
-        border-color: rgba(139,92,246,0.22); filter: blur(1px);
-        animation: shard-float-2 15s ease-in-out infinite alternate;
-    }
-    .bg-shard.shard3 {
-        width: 60px; height: 60px; top: 40%; right: 22%; opacity: 0.3;
-        border-color: rgba(79,70,229,0.2); filter: blur(2px);
-        animation: shard-float-3 18s ease-in-out infinite alternate;
-    }
-    @keyframes shard-float-1 { from { transform: rotate3d(1,1,0,35deg) translateY(0); } to { transform: rotate3d(1,1,0,42deg) translateY(-16px); } }
-    @keyframes shard-float-2 { from { transform: rotate3d(1,-1,0.3,-25deg) translateY(0); } to { transform: rotate3d(1,-1,0.3,-18deg) translateY(14px); } }
-    @keyframes shard-float-3 { from { transform: rotate3d(0.5,1,0,20deg) translateY(0); } to { transform: rotate3d(0.5,1,0,28deg) translateY(-10px); } }
-
-    .hud-circle {
-        position: absolute;
-        border: 1px solid rgba(0,229,255,0.18);
-        border-radius: 50%;
-    }
-    .hud-circle.c1 { width: 340px; height: 340px; top: 8%; right: 2%; }
-    .hud-circle.c2 { width: 160px; height: 160px; top: 18%; right: 10%; border-color: rgba(168,85,247,0.15); }
-    .hud-line {
-        position: absolute;
-        height: 1px;
-        background: linear-gradient(90deg, transparent, rgba(0,229,255,0.2), transparent);
-    }
-    .hud-line.l1 { width: 260px; top: 30%; left: 4%; }
-    .hud-line.l2 { width: 180px; top: 68%; right: 16%; }
-
-    @media (prefers-reduced-motion: reduce) {
-        div[data-testid="stAppViewContainer"]::before,
-        .bg-orb, .bg-orb-ring, .bg-shard {
-            animation: none;
-        }
-        .bg-orb-parallax { transition: none; }
     }
     </style>
     """,
     unsafe_allow_html=True,
-)
-
-st.markdown(
-    """
-    <div class="bg-scene" aria-hidden="true">
-        <div class="bg-grid-plane"></div>
-        <div class="hud-circle c1"></div>
-        <div class="hud-circle c2"></div>
-        <div class="hud-line l1"></div>
-        <div class="hud-line l2"></div>
-        <div class="bg-shard shard1"></div>
-        <div class="bg-shard shard2"></div>
-        <div class="bg-shard shard3"></div>
-        <div class="bg-orb-parallax">
-            <div class="bg-orb">
-                <div class="bg-orb-core"></div>
-                <div class="bg-orb-ring ring1"></div>
-                <div class="bg-orb-ring ring2"></div>
-                <div class="bg-orb-ring ring3"></div>
-            </div>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# Cursor-following glow: st.markdown strips <script>, so the mousemove
-# listener runs inside a components.v1 iframe and reaches into the parent
-# document (same-origin under Streamlit) to set --mx/--my custom properties
-# that the ::before radial-gradient above reads.
-components.html(
-    """
-    <script>
-    const doc = window.parent.document;
-    if (!doc.__cursorGlowAttached) {
-        doc.__cursorGlowAttached = true;
-        doc.addEventListener('mousemove', (e) => {
-            doc.documentElement.style.setProperty('--mx', e.clientX + 'px');
-            doc.documentElement.style.setProperty('--my', e.clientY + 'px');
-        });
-    }
-    </script>
-    """,
-    height=0,
 )
 
 
