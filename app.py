@@ -32,14 +32,21 @@ st.markdown(
     div[data-testid="stCaptionContainer"] {opacity: 0.65;}
     hr {margin: 0.5rem 0; border-color: rgba(0,229,255,0.25);}
 
+    /* Layer 1: base - dimensional dark charcoal, not a flat fill. */
     div[data-testid="stAppViewContainer"] {
-        background-color: #05070d;
+        background-color: #06070d;
         background-image:
-            repeating-linear-gradient(0deg, rgba(0,229,255,0.05) 0px, rgba(0,229,255,0.05) 1px, transparent 1px, transparent 48px),
-            repeating-linear-gradient(90deg, rgba(0,229,255,0.05) 0px, rgba(0,229,255,0.05) 1px, transparent 1px, transparent 48px);
+            linear-gradient(165deg, #0a0d18 0%, #05060c 55%, #070911 100%),
+            repeating-linear-gradient(0deg, rgba(0,229,255,0.035) 0px, rgba(0,229,255,0.035) 1px, transparent 1px, transparent 48px),
+            repeating-linear-gradient(90deg, rgba(0,229,255,0.035) 0px, rgba(0,229,255,0.035) 1px, transparent 1px, transparent 48px);
         background-attachment: fixed;
         position: relative;
     }
+    /* Layer 2: ambient light zones + the existing cursor glow (unchanged
+       --mx/--my logic - listed first so it renders above the ambient
+       orbs and stays the dominant light source). Restrained cool tones,
+       low opacity, slow opacity-only breathing (no position drift, so it
+       can never fight the cursor glow's own positioning). */
     div[data-testid="stAppViewContainer"]::before {
         content: "";
         position: fixed;
@@ -47,15 +54,30 @@ st.markdown(
         z-index: 0;
         pointer-events: none;
         background:
-            radial-gradient(circle at var(--mx, 50%) var(--my, 30%), rgba(0,229,255,0.22), transparent 30%),
-            radial-gradient(circle at 12% 18%, rgba(0,229,255,0.14), transparent 42%),
-            radial-gradient(circle at 88% 82%, rgba(168,85,247,0.12), transparent 46%);
-        animation: glow-pulse 9s ease-in-out infinite alternate;
+            radial-gradient(circle at var(--mx, 50%) var(--my, 30%), rgba(0,229,255,0.16), transparent 26%),
+            radial-gradient(ellipse 60% 40% at 20% 15%, rgba(0,229,255,0.10), transparent 55%),
+            radial-gradient(ellipse 55% 45% at 82% 78%, rgba(139,92,246,0.09), transparent 55%),
+            radial-gradient(ellipse 50% 35% at 55% 95%, rgba(79,70,229,0.07), transparent 60%);
+        animation: glow-breathe 14s ease-in-out infinite alternate;
     }
-    @keyframes glow-pulse {
-        from { opacity: 0.55; }
+    @keyframes glow-breathe {
+        from { opacity: 0.75; }
         to { opacity: 1; }
     }
+    /* Layer 3: soft edge vignette for depth - static, sits above the glow
+       layer, still below actual content (z-index: 1 below). */
+    div[data-testid="stAppViewContainer"]::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        box-shadow: inset 0 0 220px 70px rgba(0,0,0,0.5);
+    }
+    @media (prefers-reduced-motion: reduce) {
+        div[data-testid="stAppViewContainer"]::before { animation: none; }
+    }
+    /* Layer 4: actual page content, above every decorative layer. */
     section.main > div.block-container { position: relative; z-index: 1; }
 
     h1, h2, h3 {
