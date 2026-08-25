@@ -29,11 +29,23 @@ class EmailMetadata:
 
 @dataclass
 class ClassificationResult:
+    """`category` is the Level-1 purpose (what the email does - see
+    config.Category). `context` is the Level-2 sender/domain (e.g. "Banking",
+    "Amazon") - informational only, never used to decide `category`."""
     message_id: str
     category: str
     confidence: float
     reason: str
     source: str  # "rule" or "gemini"
+    context: str = ""
+    detailed_type: str = ""
+    is_promotional: bool = False
+    is_security_sensitive: bool = False
+    cleanup_safe: bool = False
+
+    @property
+    def display_category(self) -> str:
+        return f"{self.category} / {self.context}" if self.context else self.category
 
 
 @dataclass

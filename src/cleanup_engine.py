@@ -77,7 +77,7 @@ def execute_cleanup(
             summary.skipped += 1
             audit.log_action(
                 rec.message_id, rec.email.sender, rec.email.subject,
-                rec.classification.category, rec.classification.confidence,
+                rec.classification.display_category, rec.classification.confidence,
                 rec.recommended_action, Action.KEEP,
                 rec.protection_reason or rec.classification.reason,
             )
@@ -87,7 +87,7 @@ def execute_cleanup(
             summary.manual_review += 1
             audit.log_action(
                 rec.message_id, rec.email.sender, rec.email.subject,
-                rec.classification.category, rec.classification.confidence,
+                rec.classification.display_category, rec.classification.confidence,
                 rec.recommended_action, Action.REVIEW, "Awaiting manual review",
             )
             continue
@@ -96,7 +96,7 @@ def execute_cleanup(
             summary.skipped += 1
             audit.log_action(
                 rec.message_id, rec.email.sender, rec.email.subject,
-                rec.classification.category, rec.classification.confidence,
+                rec.classification.display_category, rec.classification.confidence,
                 rec.recommended_action, "SKIPPED_UNCONFIRMED",
                 "Trash requires explicit confirmation",
             )
@@ -106,7 +106,7 @@ def execute_cleanup(
             summary.skipped += 1
             audit.log_action(
                 rec.message_id, rec.email.sender, rec.email.subject,
-                rec.classification.category, rec.classification.confidence,
+                rec.classification.display_category, rec.classification.confidence,
                 rec.recommended_action, f"DRY_RUN_{action}",
                 "Dry run - no mutation performed",
             )
@@ -127,7 +127,7 @@ def execute_cleanup(
             summary.errors += 0 if ok else 1
             audit.log_action(
                 rec.message_id, rec.email.sender, rec.email.subject,
-                rec.classification.category, rec.classification.confidence,
+                rec.classification.display_category, rec.classification.confidence,
                 rec.recommended_action, Action.ARCHIVE if ok else "ERROR",
                 rec.classification.reason, error=None if ok else "Batch archive failed",
             )
@@ -140,7 +140,7 @@ def execute_cleanup(
             summary.errors += 0 if ok else 1
             audit.log_action(
                 rec.message_id, rec.email.sender, rec.email.subject,
-                rec.classification.category, rec.classification.confidence,
+                rec.classification.display_category, rec.classification.confidence,
                 rec.recommended_action, Action.TRASH if ok else "ERROR",
                 rec.classification.reason, error=None if ok else "Trash failed",
             )
@@ -153,7 +153,7 @@ def execute_cleanup(
             summary.errors += 0 if ok else 1
             audit.log_action(
                 rec.message_id, rec.email.sender, rec.email.subject,
-                rec.classification.category, rec.classification.confidence,
+                rec.classification.display_category, rec.classification.confidence,
                 rec.recommended_action, Action.ADD_LABEL if ok else "ERROR",
                 rec.classification.reason, error=None if ok else "Add label failed",
             )

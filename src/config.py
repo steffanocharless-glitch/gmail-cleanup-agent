@@ -25,25 +25,37 @@ CACHE_DIR = PROJECT_ROOT / "data" / "cache"
 
 
 class Category:
-    IMPORTANT = "Important"
-    REQUIRES_ACTION = "Requires Action"
+    """Level-1 categories: what an email's PURPOSE is, never who sent it.
+    A single sender (a bank, Amazon, GitHub...) routinely lands mail in many
+    of these - see the `context` field on ClassificationResult for the
+    sender/domain side of the hierarchy."""
+    TRANSACTIONS = "Transactions"
+    OTP_VERIFICATION = "OTP & Verification"
+    SECURITY_ALERTS = "Security Alerts"
+    STATEMENTS_DOCUMENTS = "Statements & Documents"
+    BILLS_PAYMENTS = "Bills & Payments"
+    ORDERS_PURCHASES = "Orders & Purchases"
+    SHIPPING_DELIVERY = "Shipping & Delivery"
+    ACCOUNT_SERVICE_UPDATES = "Account & Service Updates"
+    SUBSCRIPTIONS = "Subscriptions"
     WORK = "Work"
-    CLIENT = "Client"
-    FINANCE = "Finance"
-    INVOICE_RECEIPT = "Invoice / Receipt"
     PERSONAL = "Personal"
-    NEWSLETTER = "Newsletter"
-    PROMOTIONAL = "Promotional / Marketing"
-    SOCIAL = "Social Media Notification"
-    AUTOMATED_NOTIFICATION = "Automated Notification"
-    OTP_VERIFICATION = "OTP / Verification"
-    SPAM = "Spam / Useless"
+    TRAVEL = "Travel"
+    APP_SYSTEM_NOTIFICATIONS = "App / System Notifications"
+    PROMOTIONS_MARKETING = "Promotions & Marketing"
+    NEWSLETTERS = "Newsletters"
+    SOCIAL = "Social"
+    FINANCE_INVESTMENT = "Finance / Investment"
+    SPAM_SUSPICIOUS = "Spam / Suspicious"
     UNCERTAIN = "Uncertain"
+    OTHER = "Other"
 
     ALL = [
-        IMPORTANT, REQUIRES_ACTION, WORK, CLIENT, FINANCE, INVOICE_RECEIPT,
-        PERSONAL, NEWSLETTER, PROMOTIONAL, SOCIAL, AUTOMATED_NOTIFICATION,
-        OTP_VERIFICATION, SPAM, UNCERTAIN,
+        TRANSACTIONS, OTP_VERIFICATION, SECURITY_ALERTS, STATEMENTS_DOCUMENTS,
+        BILLS_PAYMENTS, ORDERS_PURCHASES, SHIPPING_DELIVERY,
+        ACCOUNT_SERVICE_UPDATES, SUBSCRIPTIONS, WORK, PERSONAL, TRAVEL,
+        APP_SYSTEM_NOTIFICATIONS, PROMOTIONS_MARKETING, NEWSLETTERS, SOCIAL,
+        FINANCE_INVESTMENT, SPAM_SUSPICIOUS, UNCERTAIN, OTHER,
     ]
 
 
@@ -56,15 +68,43 @@ class Action:
 
 
 # Categories that must never be auto-trashed regardless of confidence/age.
+# OTP_VERIFICATION is deliberately excluded here - it is instead protected
+# only within a recent time window (see safety_rules.RECENT_SECURITY_WINDOW_HOURS),
+# so stale OTPs can still be cleaned up while fresh ones can't.
 PROTECTED_CATEGORIES = {
-    Category.IMPORTANT,
-    Category.REQUIRES_ACTION,
-    Category.FINANCE,
-    Category.INVOICE_RECEIPT,
-    Category.CLIENT,
+    Category.TRANSACTIONS,
+    Category.SECURITY_ALERTS,
+    Category.STATEMENTS_DOCUMENTS,
+    Category.BILLS_PAYMENTS,
+    Category.ORDERS_PURCHASES,
+    Category.ACCOUNT_SERVICE_UPDATES,
+    Category.WORK,
     Category.PERSONAL,
+    Category.TRAVEL,
+    Category.FINANCE_INVESTMENT,
     Category.UNCERTAIN,
 }
+
+# Level-1 categories a message may enter the cleanup workflow for (see
+# `cleanup_safe` on ClassificationResult). This is informational only - it
+# never bypasses safety_rules.decide_action or the trash confirmation step.
+CLEANUP_SAFE_CATEGORIES = {
+    Category.PROMOTIONS_MARKETING,
+    Category.NEWSLETTERS,
+    Category.SOCIAL,
+    Category.SPAM_SUSPICIOUS,
+    Category.APP_SYSTEM_NOTIFICATIONS,
+    Category.SHIPPING_DELIVERY,
+    Category.SUBSCRIPTIONS,
+}
+
+
+def compute_cleanup_safe(category: str, is_promotional: bool, is_security_sensitive: bool) -> bool:
+    """A message may enter the cleanup workflow if it's promotional or in a
+    naturally low-stakes category, and never if it's security-sensitive."""
+    if is_security_sensitive:
+        return False
+    return is_promotional or category in CLEANUP_SAFE_CATEGORIES
 
 # Sender/subject keyword hints that always force protection regardless of
 # classifier output (belt-and-suspenders on top of category protection).
@@ -77,31 +117,39 @@ PROTECTED_KEYWORDS = [
 
 # Default recommended operation per category before confidence/age rules apply.
 DEFAULT_CATEGORY_ACTION = {
-    Category.IMPORTANT: Action.KEEP,
-    Category.REQUIRES_ACTION: Action.KEEP,
-    Category.WORK: Action.KEEP,
-    Category.CLIENT: Action.KEEP,
-    Category.FINANCE: Action.KEEP,
-    Category.INVOICE_RECEIPT: Action.KEEP,
-    Category.PERSONAL: Action.KEEP,
-    Category.NEWSLETTER: Action.ARCHIVE,
-    Category.PROMOTIONAL: Action.ARCHIVE,
-    Category.SOCIAL: Action.ARCHIVE,
-    Category.AUTOMATED_NOTIFICATION: Action.ARCHIVE,
+    Category.TRANSACTIONS: Action.KEEP,
     Category.OTP_VERIFICATION: Action.ARCHIVE,
-    Category.SPAM: Action.TRASH,
+    Category.SECURITY_ALERTS: Action.KEEP,
+    Category.STATEMENTS_DOCUMENTS: Action.KEEP,
+    Category.BILLS_PAYMENTS: Action.KEEP,
+    Category.ORDERS_PURCHASES: Action.KEEP,
+    Category.SHIPPING_DELIVERY: Action.ARCHIVE,
+    Category.ACCOUNT_SERVICE_UPDATES: Action.KEEP,
+    Category.SUBSCRIPTIONS: Action.ARCHIVE,
+    Category.WORK: Action.KEEP,
+    Category.PERSONAL: Action.KEEP,
+    Category.TRAVEL: Action.KEEP,
+    Category.APP_SYSTEM_NOTIFICATIONS: Action.ARCHIVE,
+    Category.PROMOTIONS_MARKETING: Action.ARCHIVE,
+    Category.NEWSLETTERS: Action.ARCHIVE,
+    Category.SOCIAL: Action.ARCHIVE,
+    Category.FINANCE_INVESTMENT: Action.KEEP,
+    Category.SPAM_SUSPICIOUS: Action.TRASH,
     Category.UNCERTAIN: Action.REVIEW,
+    Category.OTHER: Action.REVIEW,
 }
 
 # Categories eligible for age-based cleanup rules, and the default minimum
 # age (in days) a message must reach before the rule applies.
 DEFAULT_AGE_RULES_DAYS = {
-    Category.PROMOTIONAL: 30,
-    Category.NEWSLETTER: 30,
-    Category.SOCIAL: 30,
     Category.OTP_VERIFICATION: 30,
-    Category.AUTOMATED_NOTIFICATION: 45,
-    Category.SPAM: 7,
+    Category.SHIPPING_DELIVERY: 14,
+    Category.SUBSCRIPTIONS: 30,
+    Category.APP_SYSTEM_NOTIFICATIONS: 45,
+    Category.PROMOTIONS_MARKETING: 21,
+    Category.NEWSLETTERS: 30,
+    Category.SOCIAL: 30,
+    Category.SPAM_SUSPICIOUS: 7,
 }
 
 

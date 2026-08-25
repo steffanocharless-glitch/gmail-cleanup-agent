@@ -84,7 +84,12 @@ def _is_protected(
     if classification.confidence < config.thresholds.low:
         return True, f"Low confidence ({classification.confidence:.2f})"
 
-    haystack = f"{email.sender} {email.subject} {email.snippet}".lower()
+    # Content only, deliberately excluding email.sender: a keyword like "bank"
+    # or "payment" showing up in a sender's domain must not force-protect
+    # every email from that sender (that's the sender-first anti-pattern
+    # this whole classification system exists to avoid). Promotional mail
+    # from a bank/vendor should still be cleanup-eligible.
+    haystack = f"{email.subject} {email.snippet}".lower()
     for keyword in PROTECTED_KEYWORDS:
         if keyword in haystack:
             return True, f"Matched protected keyword: '{keyword}'"

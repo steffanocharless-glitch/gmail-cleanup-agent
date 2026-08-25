@@ -23,8 +23,8 @@ def test_dry_run_performs_no_gmail_mutation(config, tmp_path):
     config.dry_run = True
     gmail = MagicMock()
     audit = MagicMock()
-    recs = [_rec("m1", Category.PROMOTIONAL, Action.ARCHIVE),
-            _rec("m2", Category.SPAM, Action.TRASH)]
+    recs = [_rec("m1", Category.PROMOTIONS_MARKETING, Action.ARCHIVE),
+            _rec("m2", Category.SPAM_SUSPICIOUS, Action.TRASH)]
 
     summary = execute_cleanup(gmail, recs, config, audit, trash_confirmed=True)
 
@@ -40,7 +40,7 @@ def test_trash_without_confirmation_is_skipped(config):
     gmail = MagicMock()
     gmail.trash_batch.return_value = []
     audit = MagicMock()
-    recs = [_rec("m1", Category.SPAM, Action.TRASH)]
+    recs = [_rec("m1", Category.SPAM_SUSPICIOUS, Action.TRASH)]
 
     summary = execute_cleanup(gmail, recs, config, audit, trash_confirmed=False)
 
@@ -54,7 +54,7 @@ def test_trash_with_confirmation_executes(config):
     gmail = MagicMock()
     gmail.trash_batch.return_value = []  # no failures
     audit = MagicMock()
-    recs = [_rec("m1", Category.SPAM, Action.TRASH)]
+    recs = [_rec("m1", Category.SPAM_SUSPICIOUS, Action.TRASH)]
 
     summary = execute_cleanup(gmail, recs, config, audit, trash_confirmed=True)
 
@@ -66,7 +66,7 @@ def test_protected_emails_are_kept_and_counted(config):
     config.dry_run = False
     gmail = MagicMock()
     audit = MagicMock()
-    recs = [_rec("m1", Category.FINANCE, Action.KEEP, protected=True)]
+    recs = [_rec("m1", Category.FINANCE_INVESTMENT, Action.KEEP, protected=True)]
 
     summary = execute_cleanup(gmail, recs, config, audit, trash_confirmed=True)
 
@@ -81,7 +81,7 @@ def test_batch_failure_is_recorded_as_error(config):
     gmail = MagicMock()
     gmail.archive_batch.return_value = ["m1"]  # m1 failed
     audit = MagicMock()
-    recs = [_rec("m1", Category.PROMOTIONAL, Action.ARCHIVE)]
+    recs = [_rec("m1", Category.PROMOTIONS_MARKETING, Action.ARCHIVE)]
 
     summary = execute_cleanup(gmail, recs, config, audit, trash_confirmed=True)
 

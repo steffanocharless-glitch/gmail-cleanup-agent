@@ -22,7 +22,9 @@ def test_classifier_parses_valid_response(mock_client_cls, config, tmp_path):
     mock_client_cls.return_value = mock_client
     email = make_email(message_id="m1", sender="a@b.com", subject="Hi")
     mock_client.models.generate_content.return_value = _fake_response(
-        '[{"message_id": "m1", "category": "Personal", "confidence": 0.82, "reason": "friendly tone"}]'
+        '[{"message_id": "m1", "category": "Personal", "detailed_type": "Note", '
+        '"confidence": 0.82, "reason": "friendly tone", "is_promotional": false, '
+        '"is_security_sensitive": false}]'
     )
 
     classifier = EmailClassifier(config, cache_dir=tmp_path)
@@ -31,6 +33,8 @@ def test_classifier_parses_valid_response(mock_client_cls, config, tmp_path):
     assert len(results) == 1
     assert results[0].category == Category.PERSONAL
     assert results[0].confidence == 0.82
+    assert results[0].detailed_type == "Note"
+    assert results[0].is_promotional is False
     assert classifier.usage.calls == 1
 
 

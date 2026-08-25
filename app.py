@@ -13,7 +13,7 @@ import streamlit as st
 from src.cleanup_engine import execute_cleanup, scan_and_classify
 from src.classifier import EmailClassifier
 from src.composio_service import ComposioService, ComposioServiceError
-from src.config import Action, Category, get_config
+from src.config import Action, get_config
 from src.gmail_service import GmailService
 from src.identity import derive_user_id
 from src.logger import AuditLogger, get_logger
@@ -212,27 +212,30 @@ def render_inbox_overview(scan_result) -> None:
 
 def render_classification_breakdown(recommendations) -> None:
     st.header("3. AI Classification")
-    counts = Counter(r.classification.category for r in recommendations)
+    st.caption(
+        "Grouped by Purpose / Context - the same sender can appear in "
+        "several rows (e.g. Transactions / Banking and Promotions & "
+        "Marketing / Banking are counted separately)."
+    )
+    counts = Counter(r.classification.display_category for r in recommendations)
     df = pd.DataFrame(
-        [{"Category": cat, "Count": counts.get(cat, 0)} for cat in Category.ALL]
-    ).sort_values("Count", ascending=False)
+        [{"Category": cat, "Count": count} for cat, count in counts.most_common()]
+    )
     st.bar_chart(df.set_index("Category"))
     st.dataframe(df, width="stretch", hide_index=True)
 
 
 def render_recommendations(recommendations, config) -> None:
     st.header("4. Cleanup Recommendations")
-    counts_by_cat = Counter(r.classification.category for r in recommendations)
+    counts_by_cat = Counter(r.classification.display_category for r in recommendations)
     default_action_by_cat = {}
-    for cat in Category.ALL:
-        sample = next((r for r in recommendations if r.classification.category == cat), None)
-        default_action_by_cat[cat] = sample.recommended_action if sample else "-"
+    for cat in counts_by_cat:
+        sample = next(r for r in recommendations if r.classification.display_category == cat)
+        default_action_by_cat[cat] = sample.recommended_action
 
-    for cat in Category.ALL:
-        if counts_by_cat.get(cat, 0) == 0:
-            continue
+    for cat, count in counts_by_cat.most_common():
         col1, col2, col3 = st.columns([3, 1, 2])
-        col1.write(f"**{cat}** ({counts_by_cat[cat]} emails)")
+        col1.write(f"**{cat}** ({count} emails)")
         col2.write(default_action_by_cat[cat])
         options = [Action.KEEP, Action.ARCHIVE, Action.TRASH, Action.REVIEW]
         override = col3.selectbox(
@@ -248,7 +251,7 @@ def render_recommendations(recommendations, config) -> None:
 
 def apply_overrides(recommendations) -> None:
     for rec in recommendations:
-        override = st.session_state.overrides.get(rec.classification.category)
+        override = st.session_state.overrides.get(rec.classification.display_category)
         rec.user_override = override if override else None
 
 
@@ -256,7 +259,7 @@ def render_preview(recommendations) -> None:
     st.header("5. Preview")
     apply_overrides(recommendations)
 
-    categories = sorted({r.classification.category for r in recommendations})
+    categories = sorted({r.classification.display_category for r in recommendations})
     actions = sorted({r.user_override or r.recommended_action for r in recommendations})
     col1, col2 = st.columns(2)
     cat_filter = col1.multiselect("Filter by category", categories, default=[])
@@ -264,7 +267,7 @@ def render_preview(recommendations) -> None:
 
     filtered = recommendations
     if cat_filter:
-        filtered = [r for r in filtered if r.classification.category in cat_filter]
+        filtered = [r for r in filtered if r.classification.display_category in cat_filter]
     if action_filter:
         filtered = [r for r in filtered if (r.user_override or r.recommended_action) in action_filter]
 
@@ -272,7 +275,9 @@ def render_preview(recommendations) -> None:
         "Sender": r.email.sender,
         "Subject": r.email.subject,
         "Received": r.email.received_at.date(),
-        "Category": r.classification.category,
+        "Purpose": r.classification.category,
+        "Context": r.classification.context,
+        "Detailed Type": r.classification.detailed_type,
         "Action": r.user_override or r.recommended_action,
         "Confidence": round(r.classification.confidence, 2),
         "Reason": r.protection_reason or r.classification.reason,
