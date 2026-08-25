@@ -10,6 +10,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.cleanup_engine import execute_cleanup, scan_and_classify
 from src.classifier import EmailClassifier
@@ -46,8 +47,9 @@ st.markdown(
         z-index: 0;
         pointer-events: none;
         background:
-            radial-gradient(circle at 12% 18%, rgba(0,229,255,0.16), transparent 42%),
-            radial-gradient(circle at 88% 82%, rgba(168,85,247,0.13), transparent 46%);
+            radial-gradient(circle at var(--mx, 50%) var(--my, 30%), rgba(0,229,255,0.22), transparent 30%),
+            radial-gradient(circle at 12% 18%, rgba(0,229,255,0.14), transparent 42%),
+            radial-gradient(circle at 88% 82%, rgba(168,85,247,0.12), transparent 46%);
         animation: glow-pulse 9s ease-in-out infinite alternate;
     }
     @keyframes glow-pulse {
@@ -86,6 +88,26 @@ st.markdown(
     </style>
     """,
     unsafe_allow_html=True,
+)
+
+# Cursor-following glow: st.markdown strips <script>, so the mousemove
+# listener runs inside a components.v1 iframe and reaches into the parent
+# document (same-origin under Streamlit) to set --mx/--my custom properties
+# that the ::before radial-gradient above reads.
+components.html(
+    """
+    <script>
+    const doc = window.parent.document;
+    if (!doc.__cursorGlowAttached) {
+        doc.__cursorGlowAttached = true;
+        doc.addEventListener('mousemove', (e) => {
+            doc.documentElement.style.setProperty('--mx', e.clientX + 'px');
+            doc.documentElement.style.setProperty('--my', e.clientY + 'px');
+        });
+    }
+    </script>
+    """,
+    height=0,
 )
 
 
