@@ -13,7 +13,7 @@ import streamlit as st
 from src.cleanup_engine import execute_cleanup, scan_and_classify
 from src.classifier import EmailClassifier
 from src.composio_service import ComposioService, ComposioServiceError
-from src.config import Action, get_config
+from src.config import Action, Category, get_config
 from src.gmail_service import GmailService
 from src.identity import derive_user_id
 from src.logger import AuditLogger, get_logger
@@ -210,14 +210,50 @@ def render_inbox_overview(scan_result) -> None:
         )
 
 
+# Banking mail gets the full Purpose/Context hierarchy (that's the whole
+# point - one bank spans Transactions/Security/Promotions/etc). Everything
+# else collapses into a handful of coarse buckets for the UI so the
+# breakdown/recommendations views don't explode into one row per sender.
+# This is a display-only grouping - decide_action/safety_rules still runs
+# per-message against the full fine-grained category, unaffected by this.
+_COARSE_UI_GROUPS = {
+    Category.SECURITY_ALERTS: "Security & Verification",
+    Category.OTP_VERIFICATION: "Security & Verification",
+    Category.ORDERS_PURCHASES: "Orders & Shopping",
+    Category.SHIPPING_DELIVERY: "Orders & Shopping",
+    Category.PROMOTIONS_MARKETING: "Promotions",
+    Category.NEWSLETTERS: "Promotions",
+    Category.APP_SYSTEM_NOTIFICATIONS: "Notifications",
+    Category.ACCOUNT_SERVICE_UPDATES: "Notifications",
+    Category.SUBSCRIPTIONS: "Notifications",
+    Category.SOCIAL: "Notifications",
+    Category.PERSONAL: "Personal & Work",
+    Category.WORK: "Personal & Work",
+    Category.TRAVEL: "Personal & Work",
+    Category.TRANSACTIONS: "Finance",
+    Category.STATEMENTS_DOCUMENTS: "Finance",
+    Category.BILLS_PAYMENTS: "Finance",
+    Category.FINANCE_INVESTMENT: "Finance",
+    Category.UNCERTAIN: "Other",
+    Category.OTHER: "Other",
+    Category.SPAM_SUSPICIOUS: "Other",
+}
+
+
+def ui_group(classification) -> str:
+    if classification.context == "Banking":
+        return classification.display_category
+    return _COARSE_UI_GROUPS.get(classification.category, "Other")
+
+
 def render_classification_breakdown(recommendations) -> None:
     st.header("3. AI Classification")
     st.caption(
-        "Grouped by Purpose / Context - the same sender can appear in "
-        "several rows (e.g. Transactions / Banking and Promotions & "
-        "Marketing / Banking are counted separately)."
+        "Banking mail is broken down by Purpose / Context (Transactions, "
+        "Security Alerts, Promotions, ... all under Banking). Everything "
+        "else is grouped into a few coarse buckets."
     )
-    counts = Counter(r.classification.display_category for r in recommendations)
+    counts = Counter(ui_group(r.classification) for r in recommendations)
     df = pd.DataFrame(
         [{"Category": cat, "Count": count} for cat, count in counts.most_common()]
     )
@@ -227,10 +263,10 @@ def render_classification_breakdown(recommendations) -> None:
 
 def render_recommendations(recommendations, config) -> None:
     st.header("4. Cleanup Recommendations")
-    counts_by_cat = Counter(r.classification.display_category for r in recommendations)
+    counts_by_cat = Counter(ui_group(r.classification) for r in recommendations)
     default_action_by_cat = {}
     for cat in counts_by_cat:
-        sample = next(r for r in recommendations if r.classification.display_category == cat)
+        sample = next(r for r in recommendations if ui_group(r.classification) == cat)
         default_action_by_cat[cat] = sample.recommended_action
 
     for cat, count in counts_by_cat.most_common():
@@ -251,7 +287,7 @@ def render_recommendations(recommendations, config) -> None:
 
 def apply_overrides(recommendations) -> None:
     for rec in recommendations:
-        override = st.session_state.overrides.get(rec.classification.display_category)
+        override = st.session_state.overrides.get(ui_group(rec.classification))
         rec.user_override = override if override else None
 
 
@@ -259,7 +295,7 @@ def render_preview(recommendations) -> None:
     st.header("5. Preview")
     apply_overrides(recommendations)
 
-    categories = sorted({r.classification.display_category for r in recommendations})
+    categories = sorted({ui_group(r.classification) for r in recommendations})
     actions = sorted({r.user_override or r.recommended_action for r in recommendations})
     col1, col2 = st.columns(2)
     cat_filter = col1.multiselect("Filter by category", categories, default=[])
@@ -267,7 +303,7 @@ def render_preview(recommendations) -> None:
 
     filtered = recommendations
     if cat_filter:
-        filtered = [r for r in filtered if r.classification.display_category in cat_filter]
+        filtered = [r for r in filtered if ui_group(r.classification) in cat_filter]
     if action_filter:
         filtered = [r for r in filtered if (r.user_override or r.recommended_action) in action_filter]
 
