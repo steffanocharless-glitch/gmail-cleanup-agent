@@ -11,6 +11,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.cleanup_engine import execute_cleanup, scan_and_classify
 from src.classifier import EmailClassifier
@@ -53,7 +54,34 @@ st.markdown(
         background-image: radial-gradient(circle, rgba(71,85,105,0.16) 1px, transparent 1px);
         background-size: 22px 22px;
         background-attachment: fixed;
+        position: relative;
     }
+    /* Cursor spotlight: a second, larger/brighter dot-grid on the exact
+       same 22px lattice, revealed only in a circle around the cursor via
+       mask - the dots there visibly grow, everywhere else stays the plain
+       fine grid above. --mx/--my set by the script below; default parks
+       the spotlight off-screen so nothing shows before the first move. */
+    div[data-testid="stAppViewContainer"]::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background-image: radial-gradient(circle, rgba(71,85,105,0.6) 2.5px, transparent 2.5px);
+        background-size: 22px 22px;
+        -webkit-mask-image: radial-gradient(circle 150px at var(--mx, -9999px) var(--my, -9999px), black 0%, transparent 100%);
+        mask-image: radial-gradient(circle 150px at var(--mx, -9999px) var(--my, -9999px), black 0%, transparent 100%);
+    }
+    /* Soft glow halo behind the enlarged dots. */
+    div[data-testid="stAppViewContainer"]::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background: radial-gradient(circle 150px at var(--mx, -9999px) var(--my, -9999px), rgba(71,85,105,0.10), transparent 75%);
+    }
+    section.main > div.block-container { position: relative; z-index: 1; }
 
     div[data-testid="stMetric"] {
         background: #f1f5f9;
@@ -69,6 +97,25 @@ st.markdown(
     </style>
     """,
     unsafe_allow_html=True,
+)
+
+# st.markdown strips <script>, so the mousemove listener runs inside a
+# components.v1 iframe and reaches into the parent document (same-origin
+# under Streamlit) to set --mx/--my, which the dot-grid spotlight above reads.
+components.html(
+    """
+    <script>
+    const doc = window.parent.document;
+    if (!doc.__cursorSpotlightAttached) {
+        doc.__cursorSpotlightAttached = true;
+        doc.addEventListener('mousemove', (e) => {
+            doc.documentElement.style.setProperty('--mx', e.clientX + 'px');
+            doc.documentElement.style.setProperty('--my', e.clientY + 'px');
+        });
+    }
+    </script>
+    """,
+    height=0,
 )
 
 
