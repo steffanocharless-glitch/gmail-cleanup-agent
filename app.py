@@ -45,6 +45,16 @@ st.markdown(
     div[data-testid="stCaptionContainer"] {opacity: 0.7;}
     hr {margin: 0.5rem 0; border-color: #cbd5e1;}
 
+    /* Subtle dot-grid, common in enterprise dashboards (Stripe/Linear-style) -
+       fixed so it doesn't scroll with content, low-contrast slate on the
+       light background rather than anything saturated. */
+    div[data-testid="stAppViewContainer"] {
+        background-color: #f8fafc;
+        background-image: radial-gradient(circle, rgba(71,85,105,0.16) 1px, transparent 1px);
+        background-size: 22px 22px;
+        background-attachment: fixed;
+    }
+
     div[data-testid="stMetric"] {
         background: #f1f5f9;
         border: 1px solid #cbd5e1;
