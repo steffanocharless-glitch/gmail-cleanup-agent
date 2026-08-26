@@ -250,7 +250,7 @@ class AppConfig:
 
     # Batching / rate limits
     fetch_batch_size: int = field(default_factory=lambda: _env_int("FETCH_BATCH_SIZE", 100))
-    classify_batch_size: int = field(default_factory=lambda: _env_int("CLASSIFY_BATCH_SIZE", 20))
+    classify_batch_size: int = field(default_factory=lambda: _env_int("CLASSIFY_BATCH_SIZE", 100))
     max_messages_per_scan: int = field(
         default_factory=lambda: _env_int("MAX_MESSAGES_PER_SCAN", 2000)
     )
