@@ -18,6 +18,7 @@ from src.logger import get_logger
 logger = get_logger(__name__)
 
 GMAIL_TOOLKIT = "GMAIL"
+CALENDAR_TOOLKIT = "GOOGLECALENDAR"
 
 
 class ComposioServiceError(Exception):
@@ -37,13 +38,27 @@ class ConnectionInfo:
 
 
 class ComposioService:
-    """User-scoped Composio access. One instance per app session/user_id."""
+    """User-scoped Composio access. One instance per app session/user_id/toolkit.
 
-    def __init__(self, config: AppConfig, user_id: str):
+    Defaults to Gmail (the original single-toolkit shape) so existing call
+    sites (`ComposioService(config, user_id=...)`) are unaffected; pass
+    `toolkit`/`auth_config_id` to connect a different app (e.g. Google
+    Calendar) for the same user - Composio scopes OAuth per toolkit, so
+    each needs its own connected account even under the same Google login."""
+
+    def __init__(
+        self,
+        config: AppConfig,
+        user_id: str,
+        toolkit: str = GMAIL_TOOLKIT,
+        auth_config_id: Optional[str] = None,
+    ):
         if not config.composio_api_key:
             raise ComposioServiceError("COMPOSIO_API_KEY is not configured")
         self._config = config
         self.user_id = user_id
+        self._toolkit = toolkit.upper()
+        self._auth_config_id = auth_config_id or config.composio_gmail_auth_config_id
         self._client = Composio(api_key=config.composio_api_key)
 
     # ---- Connection lifecycle -------------------------------------------------
@@ -52,7 +67,7 @@ class ComposioService:
         """Kick off hosted OAuth for this user and return a redirect URL."""
         request = self._client.connected_accounts.link(
             user_id=self.user_id,
-            auth_config_id=self._config.composio_gmail_auth_config_id,
+            auth_config_id=self._auth_config_id,
             callback_url=self._config.composio_callback_url or None,
         )
         return ConnectionInfo(
@@ -68,12 +83,13 @@ class ComposioService:
         return self._to_connection_info(account)
 
     def get_connection_status(self) -> ConnectionInfo:
-        """Look up the most recent active Gmail connection for this user, if any.
+        """Look up the most recent active connection (for this toolkit) for
+        this user, if any.
 
         Retries transient lookup failures instead of reporting them as
         "not connected" - swallowing a network blip into NOT_CONNECTED would
-        send an already-connected user through Google's OAuth consent screen
-        again for no reason."""
+        send an already-connected user through OAuth consent again for no
+        reason."""
         attempts = max(self._config.gmail_retry_attempts, 1)
         backoff = self._config.gmail_retry_backoff_seconds
         last_error: Optional[Exception] = None
@@ -88,7 +104,7 @@ class ComposioService:
                 last_error = exc
                 if attempt >= attempts:
                     raise ComposioServiceError(
-                        f"Could not verify existing Gmail connection after {attempts} attempts: {exc}"
+                        f"Could not verify existing {self._toolkit} connection after {attempts} attempts: {exc}"
                     ) from exc
                 sleep_for = backoff * (2 ** (attempt - 1))
                 logger.warning(
@@ -98,13 +114,13 @@ class ComposioService:
                 time.sleep(sleep_for)
 
         items = getattr(accounts, "items", accounts) or []
-        gmail_accounts = [
+        toolkit_accounts = [
             a for a in items
-            if getattr(getattr(a, "toolkit", None), "slug", "").upper() == GMAIL_TOOLKIT
+            if getattr(getattr(a, "toolkit", None), "slug", "").upper() == self._toolkit
         ]
-        if not gmail_accounts:
+        if not toolkit_accounts:
             return ConnectionInfo(connected_account_id=None, status="NOT_CONNECTED")
-        return self._to_connection_info(gmail_accounts[0])
+        return self._to_connection_info(toolkit_accounts[0])
 
     def disconnect(self, connected_account_id: str) -> None:
         self._client.connected_accounts.disable(connected_account_id)

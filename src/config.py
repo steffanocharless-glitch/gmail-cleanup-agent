@@ -241,6 +241,13 @@ class AppConfig:
     composio_callback_url: str = field(
         default_factory=lambda: _env_str("COMPOSIO_CALLBACK_URL")
     )
+    # Optional: Google Calendar auth config for actionable-date suggestions
+    # (bills due, renewals, interviews...). A separate Composio connection
+    # from Gmail even though it's the same Google account - Composio scopes
+    # OAuth per toolkit. Feature is hidden in the UI when this is blank.
+    composio_calendar_auth_config_id: str = field(
+        default_factory=lambda: _env_str("COMPOSIO_CALENDAR_AUTH_CONFIG_ID")
+    )
 
     # Gemini
     gemini_api_key: str = field(default_factory=lambda: _env_str("GEMINI_API_KEY"))

@@ -13,9 +13,11 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+from src.actionable_dates import detect_actionable_date
+from src.calendar_service import CalendarService
 from src.cleanup_engine import execute_cleanup, scan_and_classify
 from src.classifier import EmailClassifier
-from src.composio_service import ComposioService, ComposioServiceError
+from src.composio_service import CALENDAR_TOOLKIT, ComposioService, ComposioServiceError
 from src.config import PROJECT_ROOT, Action, Category, get_config
 from src.gmail_service import GmailService
 from src.identity import derive_user_id
@@ -132,6 +134,11 @@ def init_state() -> None:
         "overrides": {},
         "dry_run": True,
         "cleanup_summary": None,
+        # Google Calendar (separate Composio connection from Gmail)
+        "calendar_connected_account_id": None,
+        "calendar_connection_status": "NOT_CONNECTED",
+        "calendar_pending_redirect_url": None,
+        "calendar_created_message_ids": set(),
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -173,10 +180,13 @@ def render_identity_bar() -> None:
     col1.caption(f"**{st.session_state.display_name}** · `{fingerprint}`")
     if col2.button("Sign out"):
         for key in ("user_id", "display_name", "connected_account_id", "connected_email",
-                    "pending_redirect_url", "scan_result", "cleanup_summary"):
+                    "pending_redirect_url", "scan_result", "cleanup_summary",
+                    "calendar_connected_account_id", "calendar_pending_redirect_url"):
             st.session_state[key] = None
         st.session_state.identified = False
         st.session_state.connection_status = "NOT_CONNECTED"
+        st.session_state.calendar_connection_status = "NOT_CONNECTED"
+        st.session_state.calendar_created_message_ids = set()
         st.session_state.overrides = {}
         st.session_state.dry_run = True
         st.rerun()
@@ -248,6 +258,73 @@ def render_connection_section(config) -> bool:
                 st.rerun()
 
     return st.session_state.connection_status == "ACTIVE"
+
+
+def get_calendar_composio(config) -> ComposioService | None:
+    if not config.composio_api_key or not config.composio_calendar_auth_config_id:
+        return None
+    return ComposioService(
+        config, user_id=st.session_state.user_id,
+        toolkit=CALENDAR_TOOLKIT, auth_config_id=config.composio_calendar_auth_config_id,
+    )
+
+
+def render_calendar_connection_section(config) -> bool:
+    """Separate Composio connection from Gmail - same Google account, but
+    Composio scopes OAuth per toolkit, so this needs its own connect step.
+    Hidden entirely if COMPOSIO_CALENDAR_AUTH_CONFIG_ID isn't configured."""
+    if not config.composio_calendar_auth_config_id:
+        return False
+
+    calendar_composio = get_calendar_composio(config)
+    st.subheader("Google Calendar")
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        if st.session_state.calendar_connection_status == "ACTIVE":
+            st.success("Calendar connected")
+        elif st.session_state.calendar_pending_redirect_url:
+            st.warning("Authorization pending. Open the link below, complete Google's OAuth "
+                       "consent, then click 'I've authorized - check status'.")
+            st.markdown(f"[Authorize Calendar access]({st.session_state.calendar_pending_redirect_url})")
+        else:
+            st.info("Not connected. Needed to turn actionable-date suggestions into real events.")
+
+    with col2:
+        if st.session_state.calendar_connection_status != "ACTIVE":
+            if st.session_state.calendar_pending_redirect_url:
+                if st.button("I've authorized - check status", key="cal_check_status"):
+                    try:
+                        info = calendar_composio.wait_for_connection(
+                            st.session_state.calendar_connected_account_id, timeout=15.0
+                        )
+                        st.session_state.calendar_connection_status = info.status
+                        if info.status != "ACTIVE":
+                            st.warning(f"Status: {info.status}. Try again after authorizing.")
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"Could not confirm connection: {exc}")
+                    st.rerun()
+            else:
+                if st.button("Connect Google Calendar"):
+                    try:
+                        info = calendar_composio.start_connection()
+                        st.session_state.calendar_connected_account_id = info.connected_account_id
+                        st.session_state.calendar_pending_redirect_url = info.redirect_url
+                    except ComposioServiceError as exc:
+                        st.error(f"Could not start connection: {exc}")
+                    st.rerun()
+        else:
+            if st.button("Disconnect Calendar"):
+                try:
+                    calendar_composio.disconnect(st.session_state.calendar_connected_account_id)
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Disconnect failed: {exc}")
+                st.session_state.calendar_connected_account_id = None
+                st.session_state.calendar_pending_redirect_url = None
+                st.session_state.calendar_connection_status = "NOT_CONNECTED"
+                st.rerun()
+
+    return st.session_state.calendar_connection_status == "ACTIVE"
 
 
 _DATE_RANGE_PRESETS = {
@@ -451,8 +528,77 @@ def render_preview(recommendations) -> None:
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
+def render_action_center(recommendations, config) -> None:
+    """Actionable-date suggestions (bills due, renewals, interviews...) from
+    this scan. Never auto-creates events - every suggestion needs an
+    explicit opt-in checkbox and an explicit button click. Independent of
+    the Purpose/Context classification; runs its own content detector."""
+    st.header("6. Action Center")
+
+    calendar_connected = st.session_state.calendar_connection_status == "ACTIVE"
+    already_created = st.session_state.calendar_created_message_ids
+    suggestions = [
+        s for r in recommendations
+        if (s := detect_actionable_date(r.email)) and s.message_id not in already_created
+    ]
+
+    if not suggestions:
+        st.caption("No actionable dates (bills due, renewals, interviews...) found in this scan.")
+        return
+
+    st.caption(f"{len(suggestions)} Calendar Suggestion(s) found. Nothing is created until you select and confirm.")
+
+    selected: list[tuple] = []
+    for s in suggestions:
+        with st.container(border=True):
+            col1, col2, col3 = st.columns([3, 2, 1])
+            with col1:
+                st.write(f"**{s.summary}**")
+                if not s.date_is_certain:
+                    st.caption("Date not confidently detected - please review before including.")
+            with col2:
+                chosen_date = st.date_input(
+                    "Event date", value=s.suggested_date,
+                    key=f"cal_date_{s.message_id}", label_visibility="collapsed",
+                )
+            with col3:
+                include = st.checkbox(
+                    "Include", value=s.date_is_certain, key=f"cal_sel_{s.message_id}",
+                )
+            if include:
+                selected.append((s, chosen_date))
+
+    if not selected:
+        return
+
+    if not calendar_connected:
+        st.info("Connect Google Calendar above to create these events.")
+        return
+
+    if st.button(f"Add {len(selected)} to Calendar", type="primary"):
+        calendar_composio = get_calendar_composio(config)
+        calendar = CalendarService(calendar_composio, st.session_state.calendar_connected_account_id)
+        events = [
+            {
+                "op_id": f"op_{i}",
+                "summary": s.summary[:200],
+                "description": f"Created by Gmail Cleanup Agent from message {s.message_id}.",
+                "start_date": chosen_date,
+                "end_date": chosen_date + timedelta(days=1),
+            }
+            for i, (s, chosen_date) in enumerate(selected)
+        ]
+        try:
+            calendar.create_all_day_events(events)
+            st.session_state.calendar_created_message_ids |= {s.message_id for s, _ in selected}
+            st.success(f"Created {len(selected)} calendar event(s).")
+            st.rerun()
+        except ComposioServiceError as exc:
+            st.error(f"Could not create events: {exc}")
+
+
 def render_confirmation(recommendations, config, gmail) -> None:
-    st.header("6. Confirmation")
+    st.header("7. Confirmation")
     apply_overrides(recommendations)
 
     final_actions = [r.user_override or r.recommended_action for r in recommendations]
@@ -493,7 +639,7 @@ def render_confirmation(recommendations, config, gmail) -> None:
 
 
 def render_results(summary) -> None:
-    st.header("7. Results")
+    st.header("8. Results")
     cols = st.columns(4)
     cols[0].metric("Emails scanned", summary.scanned)
     cols[1].metric("Emails classified", summary.classified)
@@ -532,6 +678,8 @@ def main() -> None:
 
     render_identity_bar()
     connected = render_connection_section(config)
+    if config.composio_calendar_auth_config_id:
+        render_calendar_connection_section(config)
     if not connected:
         return
 
@@ -545,6 +693,8 @@ def main() -> None:
     render_classification_breakdown(scan_result.recommendations)
     render_recommendations(scan_result.recommendations, config)
     render_preview(scan_result.recommendations)
+    if config.composio_calendar_auth_config_id:
+        render_action_center(scan_result.recommendations, config)
 
     composio = get_composio()
     gmail = GmailService(composio, st.session_state.connected_account_id)
