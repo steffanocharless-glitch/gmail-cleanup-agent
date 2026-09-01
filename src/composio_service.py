@@ -19,6 +19,7 @@ logger = get_logger(__name__)
 
 GMAIL_TOOLKIT = "GMAIL"
 CALENDAR_TOOLKIT = "GOOGLECALENDAR"
+TELEGRAM_TOOLKIT = "TELEGRAM"
 
 
 class ComposioServiceError(Exception):
@@ -81,6 +82,25 @@ class ComposioService:
             connected_account_id, timeout=timeout
         )
         return self._to_connection_info(account)
+
+    def initiate_api_key_connection(self, secret_value: str, field_name: str = "generic_api_key") -> ConnectionInfo:
+        """For API_KEY/bearer-token auth schemes (Telegram's bot token,
+        e.g.) - no OAuth redirect exists for these, so this creates the
+        connected account synchronously from a secret value already in our
+        possession, instead of the start_connection()+redirect-URL flow.
+        `field_name` matches whatever the toolkit's auth config schema
+        calls the credential (confirmed via Composio's toolkit metadata,
+        not guessed) - "generic_api_key" is Telegram's."""
+        request = self._client.connected_accounts.initiate(
+            user_id=self.user_id,
+            auth_config_id=self._auth_config_id,
+            config={"authScheme": "API_KEY", "val": {field_name: secret_value}},
+        )
+        connected_account_id = getattr(request, "id", None)
+        status = getattr(request, "status", None)
+        if status != "ACTIVE" and connected_account_id:
+            return self.wait_for_connection(connected_account_id, timeout=30.0)
+        return ConnectionInfo(connected_account_id=connected_account_id, status=status or "ACTIVE")
 
     def get_connection_status(self) -> ConnectionInfo:
         """Look up the most recent active connection (for this toolkit) for

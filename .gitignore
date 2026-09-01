@@ -6,5 +6,6 @@ __pycache__/
 .pytest_cache/
 data/cleanup_logs/*.csv
 data/cache/*.json
+data/user_settings/*.json
 .streamlit/secrets.toml
 *.log

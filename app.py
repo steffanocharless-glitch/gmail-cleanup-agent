@@ -14,6 +14,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from src.actionable_dates import detect_actionable_date
+from src.alert_messages import build_actionable_alert_message, build_daily_summary_message
 from src.calendar_service import CalendarService
 from src.cleanup_engine import execute_cleanup, scan_and_classify
 from src.classifier import EmailClassifier
@@ -22,6 +23,8 @@ from src.config import PROJECT_ROOT, Action, Category, get_config
 from src.gmail_service import GmailService
 from src.identity import derive_user_id
 from src.logger import AuditLogger, get_logger
+from src.telegram_service import TelegramAlertError, get_recent_chats, send_owner_alert
+from src.user_settings import ALERT_CATEGORIES, TelegramSettings, load_telegram_settings, save_telegram_settings
 
 logger = get_logger(__name__)
 
@@ -139,6 +142,11 @@ def init_state() -> None:
         "calendar_connection_status": "NOT_CONNECTED",
         "calendar_pending_redirect_url": None,
         "calendar_created_message_ids": set(),
+        # Telegram (app-level bot connection, no per-user OAuth - see
+        # telegram_service.py. Only the "detect my chat" candidate list
+        # needs session state; the bot's own connection status is checked
+        # live, not tracked here.)
+        "telegram_chat_candidates": None,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -187,6 +195,7 @@ def render_identity_bar() -> None:
         st.session_state.connection_status = "NOT_CONNECTED"
         st.session_state.calendar_connection_status = "NOT_CONNECTED"
         st.session_state.calendar_created_message_ids = set()
+        st.session_state.telegram_chat_candidates = None
         st.session_state.overrides = {}
         st.session_state.dry_run = True
         st.rerun()
@@ -325,6 +334,83 @@ def render_calendar_connection_section(config) -> bool:
                 st.rerun()
 
     return st.session_state.calendar_connection_status == "ACTIVE"
+
+
+def render_telegram_settings(config) -> None:
+    """No per-user OAuth here (Telegram bots use a token, not OAuth - see
+    telegram_service.py) - the bot connects itself lazily on first send.
+    What this section actually does: let the user pick which Telegram
+    chat is theirs, and which alert categories they want."""
+    if not (config.composio_telegram_auth_config_id and config.telegram_bot_token):
+        return
+
+    st.subheader("Telegram Alerts")
+    settings = load_telegram_settings(st.session_state.user_id)
+
+    if settings.chat_id:
+        st.success(f"Alerts go to: {settings.display_label or settings.chat_id}")
+    else:
+        st.info(
+            "Not set up yet. In Telegram: open the Cleanup Agent bot, press Start, "
+            "then come back and click 'Detect My Telegram Chat' below."
+        )
+
+    if st.button("Detect My Telegram Chat"):
+        try:
+            st.session_state.telegram_chat_candidates = get_recent_chats(config)
+        except TelegramAlertError as exc:
+            st.error(str(exc))
+        except ComposioServiceError as exc:
+            st.error(f"Could not reach the Telegram bot: {exc}")
+
+    candidates = st.session_state.telegram_chat_candidates
+    if candidates is not None:
+        if not candidates:
+            st.warning("No recent chats found. Message the bot (press Start) first, then try again.")
+        else:
+            options = {f"{c['label']} ({c['chat_id']})": c for c in candidates}
+            choice = st.selectbox("Which chat is yours?", list(options.keys()), key="tg_chat_choice")
+            if st.button("Confirm This Chat"):
+                picked = options[choice]
+                save_telegram_settings(st.session_state.user_id, TelegramSettings(
+                    enabled=True, chat_id=picked["chat_id"], display_label=picked["label"],
+                    categories=settings.categories,
+                ))
+                st.session_state.telegram_chat_candidates = None
+                st.success("Saved.")
+                st.rerun()
+
+    if not settings.chat_id:
+        return
+
+    with st.form("telegram_settings_form"):
+        enabled = st.checkbox("Enable Telegram alerts", value=settings.enabled)
+        st.caption("Preferences")
+        new_categories = {}
+        for key, label in ALERT_CATEGORIES.items():
+            new_categories[key] = st.checkbox(label, value=settings.categories.get(key, False), key=f"tg_pref_{key}")
+        saved = st.form_submit_button("Save Telegram Settings")
+
+    if saved:
+        save_telegram_settings(st.session_state.user_id, TelegramSettings(
+            enabled=enabled, chat_id=settings.chat_id, display_label=settings.display_label,
+            categories=new_categories,
+        ))
+        st.success("Saved.")
+        st.rerun()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if settings.enabled and st.button("Send Test Alert"):
+            try:
+                send_owner_alert(config, st.session_state.user_id, "test", "Cleanup Agent Alert\n\nThis is a test alert.")
+                st.success("Test alert sent.")
+            except TelegramAlertError as exc:
+                st.error(str(exc))
+    with col2:
+        if st.button("Disconnect Telegram (clear my settings)"):
+            save_telegram_settings(st.session_state.user_id, TelegramSettings())
+            st.rerun()
 
 
 _DATE_RANGE_PRESETS = {
@@ -528,17 +614,31 @@ def render_preview(recommendations) -> None:
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
+def _telegram_category_for(mail_category: str) -> str:
+    if mail_category == Category.BILLS_PAYMENTS:
+        return "bills_payments"
+    if mail_category == Category.SUBSCRIPTIONS:
+        return "subscription_renewals"
+    return "deadlines"
+
+
 def render_action_center(recommendations, config) -> None:
     """Actionable-date suggestions (bills due, renewals, interviews...) from
-    this scan. Never auto-creates events - every suggestion needs an
-    explicit opt-in checkbox and an explicit button click. Independent of
-    the Purpose/Context classification; runs its own content detector."""
+    this scan. Never auto-creates events, never auto-sends alerts - every
+    suggestion needs an explicit opt-in/click. Independent of the
+    Purpose/Context classification; runs its own content detector."""
     st.header("6. Action Center")
 
     calendar_connected = st.session_state.calendar_connection_status == "ACTIVE"
+    telegram_ready = False
+    tg_settings = None
+    if config.composio_telegram_auth_config_id and config.telegram_bot_token:
+        tg_settings = load_telegram_settings(st.session_state.user_id)
+        telegram_ready = tg_settings.enabled and bool(tg_settings.chat_id)
+
     already_created = st.session_state.calendar_created_message_ids
     suggestions = [
-        s for r in recommendations
+        (s, r.classification.category) for r in recommendations
         if (s := detect_actionable_date(r.email)) and s.message_id not in already_created
     ]
 
@@ -546,12 +646,12 @@ def render_action_center(recommendations, config) -> None:
         st.caption("No actionable dates (bills due, renewals, interviews...) found in this scan.")
         return
 
-    st.caption(f"{len(suggestions)} Calendar Suggestion(s) found. Nothing is created until you select and confirm.")
+    st.caption(f"{len(suggestions)} Calendar Suggestion(s) found. Nothing is created or sent until you act on each one.")
 
     selected: list[tuple] = []
-    for s in suggestions:
+    for s, mail_category in suggestions:
         with st.container(border=True):
-            col1, col2, col3 = st.columns([3, 2, 1])
+            col1, col2, col3, col4 = st.columns([3, 2, 1, 2])
             with col1:
                 st.write(f"**{s.summary}**")
                 if not s.date_is_certain:
@@ -565,6 +665,16 @@ def render_action_center(recommendations, config) -> None:
                 include = st.checkbox(
                     "Include", value=s.date_is_certain, key=f"cal_sel_{s.message_id}",
                 )
+            with col4:
+                alert_category = _telegram_category_for(mail_category)
+                can_alert = telegram_ready and tg_settings.category_enabled(alert_category)
+                if can_alert and st.button("Send Telegram Alert", key=f"tg_alert_{s.message_id}"):
+                    try:
+                        send_owner_alert(config, st.session_state.user_id, alert_category,
+                                          build_actionable_alert_message(s))
+                        st.success("Sent.")
+                    except TelegramAlertError as exc:
+                        st.error(str(exc))
             if include:
                 selected.append((s, chosen_date))
 
@@ -595,6 +705,32 @@ def render_action_center(recommendations, config) -> None:
             st.rerun()
         except ComposioServiceError as exc:
             st.error(f"Could not create events: {exc}")
+
+
+def render_daily_summary_button(scan_result, config) -> None:
+    """Manual trigger only - this app has no background scheduler (a
+    Streamlit app only runs while a page is open), so a true recurring
+    daily summary needs an external cron hitting some endpoint. Out of
+    scope here; this sends one summary, on demand, for the current scan."""
+    if not (config.composio_telegram_auth_config_id and config.telegram_bot_token):
+        return
+    settings = load_telegram_settings(st.session_state.user_id)
+    if not (settings.enabled and settings.chat_id and settings.category_enabled("daily_summary")):
+        return
+
+    counts = Counter(ui_group(r.classification) for r in scan_result.recommendations)
+    n_suggestions = sum(1 for r in scan_result.recommendations if detect_actionable_date(r.email))
+
+    if st.button("Send Telegram Daily Summary"):
+        message = build_daily_summary_message(
+            scan_result.scanned_count,
+            {**dict(counts.most_common(5)), "Calendar suggestions": n_suggestions},
+        )
+        try:
+            send_owner_alert(config, st.session_state.user_id, "daily_summary", message)
+            st.success("Daily summary sent.")
+        except TelegramAlertError as exc:
+            st.error(str(exc))
 
 
 def render_confirmation(recommendations, config, gmail) -> None:
@@ -680,6 +816,8 @@ def main() -> None:
     connected = render_connection_section(config)
     if config.composio_calendar_auth_config_id:
         render_calendar_connection_section(config)
+    if config.composio_telegram_auth_config_id and config.telegram_bot_token:
+        render_telegram_settings(config)
     if not connected:
         return
 
@@ -693,8 +831,11 @@ def main() -> None:
     render_classification_breakdown(scan_result.recommendations)
     render_recommendations(scan_result.recommendations, config)
     render_preview(scan_result.recommendations)
-    if config.composio_calendar_auth_config_id:
+    telegram_configured = config.composio_telegram_auth_config_id and config.telegram_bot_token
+    if config.composio_calendar_auth_config_id or telegram_configured:
         render_action_center(scan_result.recommendations, config)
+    if telegram_configured:
+        render_daily_summary_button(scan_result, config)
 
     composio = get_composio()
     gmail = GmailService(composio, st.session_state.connected_account_id)
