@@ -137,7 +137,11 @@ def test_not_configured_at_deployment_level(tmp_path, monkeypatch):
     monkeypatch.setattr(us, "USER_SETTINGS_DIR", tmp_path)
     cfg = AppConfig()
     cfg.composio_api_key = "test-key"
-    # composio_telegram_auth_config_id / telegram_bot_token left blank
+    # Explicitly blanked, not just "left unset" - local .env may have real
+    # values (picked up via AppConfig's env fallback), which would silently
+    # skip the deployment-not-configured path this test exists to cover.
+    cfg.composio_telegram_auth_config_id = ""
+    cfg.telegram_bot_token = ""
     with pytest.raises(TelegramNotConfiguredError):
         send_owner_alert(cfg, "user-f", "bills_payments", "hi")
 

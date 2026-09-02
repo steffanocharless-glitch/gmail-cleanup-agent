@@ -142,6 +142,9 @@ def init_state() -> None:
         "calendar_connection_status": "NOT_CONNECTED",
         "calendar_pending_redirect_url": None,
         "calendar_created_message_ids": set(),
+        "calendar_status_checked": False,
+        "calendar_connected_email": None,
+        "calendar_all_active": [],  # full ACTIVE account list, only populated when there are 2+
         # Telegram (app-level bot connection, no per-user OAuth - see
         # telegram_service.py. Only the "detect my chat" candidate list
         # needs session state; the bot's own connection status is checked
@@ -195,6 +198,9 @@ def render_identity_bar() -> None:
         st.session_state.connection_status = "NOT_CONNECTED"
         st.session_state.calendar_connection_status = "NOT_CONNECTED"
         st.session_state.calendar_created_message_ids = set()
+        st.session_state.calendar_status_checked = False
+        st.session_state.calendar_connected_email = None
+        st.session_state.calendar_all_active = []
         st.session_state.telegram_chat_candidates = None
         st.session_state.overrides = {}
         st.session_state.dry_run = True
@@ -278,6 +284,19 @@ def get_calendar_composio(config) -> ComposioService | None:
     )
 
 
+def _apply_calendar_connection(info) -> None:
+    """Single place that writes a resolved Calendar ConnectionInfo into
+    session_state, so every call site (auto-check, connect-click reuse,
+    picker switch) stays consistent."""
+    st.session_state.calendar_connection_status = "ACTIVE"
+    st.session_state.calendar_connected_account_id = info.connected_account_id
+    st.session_state.calendar_connected_email = info.connected_email
+    st.session_state.calendar_pending_redirect_url = None
+    st.session_state.calendar_all_active = (
+        [info] + info.other_active_candidates if info.other_active_candidates else []
+    )
+
+
 def render_calendar_connection_section(config) -> bool:
     """Separate Composio connection from Gmail - same Google account, but
     Composio scopes OAuth per toolkit, so this needs its own connect step.
@@ -286,12 +305,45 @@ def render_calendar_connection_section(config) -> bool:
         return False
 
     calendar_composio = get_calendar_composio(config)
+
+    # One-time check per session (mirrors what Gmail already does at sign-in):
+    # if an ACTIVE Calendar connection already exists, show it as connected
+    # immediately instead of offering a "Connect" button that would just
+    # rediscover the same thing (or, before the fix below, crash).
+    if not st.session_state.calendar_status_checked:
+        try:
+            info = calendar_composio.get_connection_status(prefer_email=st.session_state.connected_email)
+            if info.status == "ACTIVE":
+                _apply_calendar_connection(info)
+        except ComposioServiceError as exc:
+            st.warning(f"Could not check for an existing Calendar connection: {exc}")
+        st.session_state.calendar_status_checked = True
+
     st.subheader("Google Calendar")
     col1, col2 = st.columns([3, 1])
 
     with col1:
         if st.session_state.calendar_connection_status == "ACTIVE":
-            st.success("Calendar connected")
+            st.success(f"Calendar connected{' as ' + st.session_state.calendar_connected_email if st.session_state.calendar_connected_email else ''}")
+            all_active = st.session_state.calendar_all_active
+            others = [a for a in all_active if a.connected_account_id != st.session_state.calendar_connected_account_id]
+            if others:
+                st.caption(f"{len(others)} other active Calendar connection(s) also exist for this account.")
+                labels = {(a.connected_email or a.connected_account_id): a for a in all_active}
+                current_label = next(
+                    (k for k, a in labels.items() if a.connected_account_id == st.session_state.calendar_connected_account_id),
+                    None,
+                )
+                choice = st.selectbox(
+                    "Which connection to use?", list(labels.keys()),
+                    index=list(labels.keys()).index(current_label) if current_label in labels else 0,
+                    key="cal_candidate_pick",
+                )
+                if labels[choice].connected_account_id != st.session_state.calendar_connected_account_id:
+                    if st.button("Switch to this connection"):
+                        st.session_state.calendar_connected_account_id = labels[choice].connected_account_id
+                        st.session_state.calendar_connected_email = labels[choice].connected_email
+                        st.rerun()
         elif st.session_state.calendar_pending_redirect_url:
             st.warning("Authorization pending. Open the link below, complete Google's OAuth "
                        "consent, then click 'I've authorized - check status'.")
@@ -307,8 +359,10 @@ def render_calendar_connection_section(config) -> bool:
                         info = calendar_composio.wait_for_connection(
                             st.session_state.calendar_connected_account_id, timeout=15.0
                         )
-                        st.session_state.calendar_connection_status = info.status
-                        if info.status != "ACTIVE":
+                        if info.status == "ACTIVE":
+                            _apply_calendar_connection(info)
+                        else:
+                            st.session_state.calendar_connection_status = info.status
                             st.warning(f"Status: {info.status}. Try again after authorizing.")
                     except Exception as exc:  # noqa: BLE001
                         st.error(f"Could not confirm connection: {exc}")
@@ -317,8 +371,12 @@ def render_calendar_connection_section(config) -> bool:
                 if st.button("Connect Google Calendar"):
                     try:
                         info = calendar_composio.start_connection()
-                        st.session_state.calendar_connected_account_id = info.connected_account_id
-                        st.session_state.calendar_pending_redirect_url = info.redirect_url
+                        if info.status == "ACTIVE":
+                            # Reused an existing connection - no OAuth needed.
+                            _apply_calendar_connection(info)
+                        else:
+                            st.session_state.calendar_connected_account_id = info.connected_account_id
+                            st.session_state.calendar_pending_redirect_url = info.redirect_url
                     except ComposioServiceError as exc:
                         st.error(f"Could not start connection: {exc}")
                     st.rerun()
@@ -329,8 +387,11 @@ def render_calendar_connection_section(config) -> bool:
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"Disconnect failed: {exc}")
                 st.session_state.calendar_connected_account_id = None
+                st.session_state.calendar_connected_email = None
                 st.session_state.calendar_pending_redirect_url = None
                 st.session_state.calendar_connection_status = "NOT_CONNECTED"
+                st.session_state.calendar_all_active = []
+                st.session_state.calendar_status_checked = True  # we know it's gone, no need to re-check
                 st.rerun()
 
     return st.session_state.calendar_connection_status == "ACTIVE"

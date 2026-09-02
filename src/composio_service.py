@@ -7,10 +7,11 @@ returned to callers/UI - only connection status and data.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from composio import Composio
+from composio.exceptions import ComposioMultipleConnectedAccountsError
 
 from src.config import AppConfig
 from src.logger import get_logger
@@ -36,6 +37,11 @@ class ConnectionInfo:
     status: str  # ACTIVE | INITIATED | FAILED | NOT_CONNECTED
     connected_email: Optional[str] = None
     redirect_url: Optional[str] = None
+    # Populated only when get_connection_status() found more than one ACTIVE
+    # account for this user/toolkit - lets the UI offer a picker instead of
+    # silently guessing. `connected_account_id`/`status` above already hold
+    # the best automatic pick (email-match if available, else first).
+    other_active_candidates: list["ConnectionInfo"] = field(default_factory=list)
 
 
 class ComposioService:
@@ -65,12 +71,34 @@ class ComposioService:
     # ---- Connection lifecycle -------------------------------------------------
 
     def start_connection(self) -> ConnectionInfo:
-        """Kick off hosted OAuth for this user and return a redirect URL."""
-        request = self._client.connected_accounts.link(
-            user_id=self.user_id,
-            auth_config_id=self._auth_config_id,
-            callback_url=self._config.composio_callback_url or None,
-        )
+        """Kick off hosted OAuth for this user and return a redirect URL -
+        but only if no usable connection already exists. link() raises
+        ComposioMultipleConnectedAccountsError if the user already has an
+        ACTIVE connection on this auth config (allow_multiple defaults to
+        False) - reuse it instead of duplicating, rather than crashing or
+        asking the user to manually clean up accounts in Composio."""
+        existing = self.get_connection_status()
+        if existing.status == "ACTIVE":
+            return existing
+
+        try:
+            request = self._client.connected_accounts.link(
+                user_id=self.user_id,
+                auth_config_id=self._auth_config_id,
+                callback_url=self._config.composio_callback_url or None,
+            )
+        except ComposioMultipleConnectedAccountsError:
+            # Race (an account went ACTIVE between our check and this call)
+            # or a status our ACTIVE-only check didn't already resolve.
+            # Re-check once and reuse rather than surfacing a raw SDK
+            # traceback; if still nothing usable, give a plain-language error.
+            existing = self.get_connection_status()
+            if existing.status == "ACTIVE":
+                return existing
+            raise ComposioServiceError(
+                f"A {self._toolkit} connection already exists for this account but isn't active. "
+                "Disconnect and reconnect, or contact support if this persists."
+            )
         return ConnectionInfo(
             connected_account_id=getattr(request, "id", None),
             status="INITIATED",
@@ -102,9 +130,17 @@ class ComposioService:
             return self.wait_for_connection(connected_account_id, timeout=30.0)
         return ConnectionInfo(connected_account_id=connected_account_id, status=status or "ACTIVE")
 
-    def get_connection_status(self) -> ConnectionInfo:
-        """Look up the most recent active connection (for this toolkit) for
-        this user, if any.
+    def get_connection_status(self, prefer_email: Optional[str] = None) -> ConnectionInfo:
+        """Look up the active connection (for this toolkit) for this user,
+        if any. The server-side `statuses=["ACTIVE"]` filter already
+        excludes EXPIRED/FAILED/etc accounts - no extra filtering needed
+        for that.
+
+        If more than one ACTIVE account exists (duplicates Composio allows
+        but this app doesn't want to require manual cleanup for), picks the
+        one whose connected_email matches `prefer_email` if given, else the
+        first; the rest are returned on `other_active_candidates` so the UI
+        can offer a picker instead of silently guessing.
 
         Retries transient lookup failures instead of reporting them as
         "not connected" - swallowing a network blip into NOT_CONNECTED would
@@ -134,13 +170,30 @@ class ComposioService:
                 time.sleep(sleep_for)
 
         items = getattr(accounts, "items", accounts) or []
+        # Belt-and-suspenders: the `statuses=["ACTIVE"]` request param should
+        # already exclude EXPIRED/FAILED/etc, but don't trust that alone -
+        # filter client-side too so this method can't be fooled by a status
+        # filter that silently stopped being honored server-side.
         toolkit_accounts = [
             a for a in items
             if getattr(getattr(a, "toolkit", None), "slug", "").upper() == self._toolkit
+            and getattr(a, "status", "").upper() == "ACTIVE"
         ]
         if not toolkit_accounts:
             return ConnectionInfo(connected_account_id=None, status="NOT_CONNECTED")
-        return self._to_connection_info(toolkit_accounts[0])
+
+        infos = [self._to_connection_info(a) for a in toolkit_accounts]
+        if len(infos) == 1:
+            return infos[0]
+
+        picked = infos[0]
+        if prefer_email:
+            for info in infos:
+                if info.connected_email and info.connected_email.lower() == prefer_email.lower():
+                    picked = info
+                    break
+        picked.other_active_candidates = [i for i in infos if i.connected_account_id != picked.connected_account_id]
+        return picked
 
     def disconnect(self, connected_account_id: str) -> None:
         self._client.connected_accounts.disable(connected_account_id)
