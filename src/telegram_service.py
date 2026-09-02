@@ -8,9 +8,12 @@ auto-initiated from `config.telegram_bot_token` the first time it's
 needed - nothing for an end user to click to "connect" at that layer.
 
 What IS per-user is the destination chat_id, stored in user_settings.py.
-A user "connects" by pressing Start on the bot in Telegram, then picking
-their own chat out of `get_recent_chats()` in the Settings UI - the app
-never guesses which chat is theirs.
+A user "connects" by pressing Start on the bot in Telegram, picking their
+own chat out of `get_recent_chats()` in the Settings UI, then proving they
+actually control it via `send_verification_code()` + a code entered back
+into the app - `get_recent_chats()` surfaces EVERY chat that recently
+messaged the shared bot, not just the current app user's, so picking from
+that list alone isn't proof of ownership. The verification round-trip is.
 
 `send_owner_alert()` is the ONLY function in this codebase allowed to
 trigger a send - a single, narrow, auditable choke point (same design
@@ -20,10 +23,12 @@ user_settings.
 """
 from __future__ import annotations
 
+import secrets
+
 from src.composio_service import TELEGRAM_TOOLKIT, ComposioService, ComposioServiceError
 from src.config import AppConfig
 from src.logger import get_logger
-from src.user_settings import load_telegram_settings
+from src.user_settings import TelegramSettingsStoreError, load_telegram_settings
 
 logger = get_logger(__name__)
 
@@ -96,6 +101,31 @@ def get_recent_chats(config: AppConfig) -> list[dict]:
     return [{"chat_id": cid, "label": label} for cid, label in seen.items()]
 
 
+def send_verification_code(config: AppConfig, chat_id: str) -> str:
+    """Sends a random 6-digit code to `chat_id` via the shared bot. The app
+    user must read that code from their own Telegram app and type it back
+    in - proof they have access to that chat's messages, not just that it
+    appeared in the shared recent-senders list. Returns the code for the
+    caller to compare against what's entered (not stored server-side; the
+    caller holds it in session state for the duration of this one check)."""
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    try:
+        connected_account_id = ensure_bot_connected(config)
+    except ComposioServiceError as exc:
+        raise TelegramNotConfiguredError(f"Telegram bot connection failed: {exc}") from exc
+
+    composio = _bot_composio(config)
+    try:
+        composio.execute(
+            "TELEGRAM_SEND_MESSAGE",
+            arguments={"chat_id": chat_id, "text": f"Your Cleanup Agent verification code: {code}"},
+            connected_account_id=connected_account_id,
+        )
+    except ComposioServiceError as exc:
+        raise TelegramAlertError(f"Could not send verification code: {exc}") from exc
+    return code
+
+
 def send_owner_alert(config: AppConfig, user_id: str, category: str, message: str) -> None:
     """category: one of user_settings.ALERT_CATEGORIES keys (including
     "daily_summary", gated by its own checkbox there like any other), or
@@ -109,7 +139,14 @@ def send_owner_alert(config: AppConfig, user_id: str, category: str, message: st
     if not config.composio_telegram_auth_config_id or not config.telegram_bot_token:
         raise TelegramNotConfiguredError("Telegram integration is not configured for this deployment.")
 
-    settings = load_telegram_settings(user_id)
+    # Fail closed: a settings-store error is NOT the same as "no settings
+    # found" and must never be treated as safe-to-default. If we can't
+    # positively verify this user's authorization, refuse to send - never
+    # fall back to stale/cached data or another user's settings.
+    try:
+        settings = load_telegram_settings(config, user_id)
+    except TelegramSettingsStoreError as exc:
+        raise TelegramNotAuthorizedError(f"Could not verify Telegram authorization right now: {exc}") from exc
     if not settings.enabled or not settings.chat_id:
         raise TelegramNotAuthorizedError("Telegram alerts are not enabled/authorized. Set them up in Telegram Alerts settings.")
     if category != "test" and not settings.category_enabled(category):

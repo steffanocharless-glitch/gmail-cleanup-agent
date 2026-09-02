@@ -23,8 +23,11 @@ from src.config import PROJECT_ROOT, Action, Category, get_config
 from src.gmail_service import GmailService
 from src.identity import derive_user_id
 from src.logger import AuditLogger, get_logger
-from src.telegram_service import TelegramAlertError, get_recent_chats, send_owner_alert
-from src.user_settings import ALERT_CATEGORIES, TelegramSettings, load_telegram_settings, save_telegram_settings
+from src.telegram_service import TelegramAlertError, get_recent_chats, send_owner_alert, send_verification_code
+from src.user_settings import (
+    ALERT_CATEGORIES, TelegramSettings, TelegramSettingsStoreError,
+    load_telegram_settings, save_telegram_settings,
+)
 
 logger = get_logger(__name__)
 
@@ -146,10 +149,11 @@ def init_state() -> None:
         "calendar_connected_email": None,
         "calendar_all_active": [],  # full ACTIVE account list, only populated when there are 2+
         # Telegram (app-level bot connection, no per-user OAuth - see
-        # telegram_service.py. Only the "detect my chat" candidate list
-        # needs session state; the bot's own connection status is checked
-        # live, not tracked here.)
+        # telegram_service.py. Only the "detect my chat" candidate list and
+        # pending-verification state need session state; the bot's own
+        # connection status is checked live, not tracked here.)
         "telegram_chat_candidates": None,
+        "telegram_pending_verification": None,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -202,6 +206,7 @@ def render_identity_bar() -> None:
         st.session_state.calendar_connected_email = None
         st.session_state.calendar_all_active = []
         st.session_state.telegram_chat_candidates = None
+        st.session_state.telegram_pending_verification = None
         st.session_state.overrides = {}
         st.session_state.dry_run = True
         st.rerun()
@@ -404,9 +409,17 @@ def render_telegram_settings(config) -> None:
     chat is theirs, and which alert categories they want."""
     if not (config.composio_telegram_auth_config_id and config.telegram_bot_token):
         return
+    if not (config.upstash_redis_url and config.upstash_redis_token):
+        st.subheader("Telegram Alerts")
+        st.warning("Telegram settings storage (Upstash Redis) isn't configured for this deployment yet.")
+        return
 
     st.subheader("Telegram Alerts")
-    settings = load_telegram_settings(st.session_state.user_id)
+    try:
+        settings = load_telegram_settings(config, st.session_state.user_id)
+    except TelegramSettingsStoreError as exc:
+        st.error(f"Could not load your Telegram settings right now: {exc}")
+        return
 
     if settings.chat_id:
         st.success(f"Alerts go to: {settings.display_label or settings.chat_id}")
@@ -419,26 +432,64 @@ def render_telegram_settings(config) -> None:
     if st.button("Detect My Telegram Chat"):
         try:
             st.session_state.telegram_chat_candidates = get_recent_chats(config)
+            st.session_state.telegram_pending_verification = None
         except TelegramAlertError as exc:
             st.error(str(exc))
         except ComposioServiceError as exc:
             st.error(f"Could not reach the Telegram bot: {exc}")
 
     candidates = st.session_state.telegram_chat_candidates
-    if candidates is not None:
+    pending = st.session_state.telegram_pending_verification
+
+    if candidates is not None and not pending:
         if not candidates:
             st.warning("No recent chats found. Message the bot (press Start) first, then try again.")
         else:
+            # This list is EVERY chat that recently messaged the shared
+            # bot, not just this app user's - could include other people.
+            # Picking from it isn't proof of ownership, so a code round
+            # trip through the picked chat is required before saving.
+            st.caption(
+                "This may include other people who've messaged the bot recently. "
+                "Picking one sends a code there - only continue if it's really yours."
+            )
             options = {f"{c['label']} ({c['chat_id']})": c for c in candidates}
             choice = st.selectbox("Which chat is yours?", list(options.keys()), key="tg_chat_choice")
-            if st.button("Confirm This Chat"):
+            if st.button("Send Verification Code"):
                 picked = options[choice]
-                save_telegram_settings(st.session_state.user_id, TelegramSettings(
-                    enabled=True, chat_id=picked["chat_id"], display_label=picked["label"],
-                    categories=settings.categories,
-                ))
-                st.session_state.telegram_chat_candidates = None
-                st.success("Saved.")
+                try:
+                    code = send_verification_code(config, picked["chat_id"])
+                    st.session_state.telegram_pending_verification = {
+                        "chat_id": picked["chat_id"], "label": picked["label"], "code": code,
+                    }
+                    st.rerun()
+                except TelegramAlertError as exc:
+                    st.error(str(exc))
+
+    if pending:
+        st.info(f"Code sent to {pending['label']}. Check that chat in Telegram and enter the code below.")
+        entered = st.text_input("Verification code", key="tg_verify_code_input")
+        col_v1, col_v2 = st.columns(2)
+        with col_v1:
+            if st.button("Verify & Save"):
+                if entered.strip() == pending["code"]:
+                    try:
+                        save_telegram_settings(config, st.session_state.user_id, TelegramSettings(
+                            enabled=True, chat_id=pending["chat_id"], display_label=pending["label"],
+                            categories=settings.categories,
+                        ))
+                    except TelegramSettingsStoreError as exc:
+                        st.error(f"Could not save: {exc}")
+                    else:
+                        st.session_state.telegram_pending_verification = None
+                        st.session_state.telegram_chat_candidates = None
+                        st.success("Verified and saved.")
+                        st.rerun()
+                else:
+                    st.error("That code doesn't match. Double-check the Telegram message, or send a new code.")
+        with col_v2:
+            if st.button("Cancel"):
+                st.session_state.telegram_pending_verification = None
                 st.rerun()
 
     if not settings.chat_id:
@@ -453,12 +504,16 @@ def render_telegram_settings(config) -> None:
         saved = st.form_submit_button("Save Telegram Settings")
 
     if saved:
-        save_telegram_settings(st.session_state.user_id, TelegramSettings(
-            enabled=enabled, chat_id=settings.chat_id, display_label=settings.display_label,
-            categories=new_categories,
-        ))
-        st.success("Saved.")
-        st.rerun()
+        try:
+            save_telegram_settings(config, st.session_state.user_id, TelegramSettings(
+                enabled=enabled, chat_id=settings.chat_id, display_label=settings.display_label,
+                categories=new_categories,
+            ))
+        except TelegramSettingsStoreError as exc:
+            st.error(f"Could not save: {exc}")
+        else:
+            st.success("Saved.")
+            st.rerun()
 
     col1, col2 = st.columns(2)
     with col1:
@@ -470,8 +525,12 @@ def render_telegram_settings(config) -> None:
                 st.error(str(exc))
     with col2:
         if st.button("Disconnect Telegram (clear my settings)"):
-            save_telegram_settings(st.session_state.user_id, TelegramSettings())
-            st.rerun()
+            try:
+                save_telegram_settings(config, st.session_state.user_id, TelegramSettings())
+            except TelegramSettingsStoreError as exc:
+                st.error(f"Could not disconnect: {exc}")
+            else:
+                st.rerun()
 
 
 _DATE_RANGE_PRESETS = {
@@ -693,9 +752,13 @@ def render_action_center(recommendations, config) -> None:
     calendar_connected = st.session_state.calendar_connection_status == "ACTIVE"
     telegram_ready = False
     tg_settings = None
-    if config.composio_telegram_auth_config_id and config.telegram_bot_token:
-        tg_settings = load_telegram_settings(st.session_state.user_id)
-        telegram_ready = tg_settings.enabled and bool(tg_settings.chat_id)
+    if config.composio_telegram_auth_config_id and config.telegram_bot_token \
+            and config.upstash_redis_url and config.upstash_redis_token:
+        try:
+            tg_settings = load_telegram_settings(config, st.session_state.user_id)
+            telegram_ready = tg_settings.enabled and bool(tg_settings.chat_id)
+        except TelegramSettingsStoreError:
+            telegram_ready = False  # can't verify -> no alert buttons shown, fail closed
 
     already_created = st.session_state.calendar_created_message_ids
     suggestions = [
@@ -773,9 +836,13 @@ def render_daily_summary_button(scan_result, config) -> None:
     Streamlit app only runs while a page is open), so a true recurring
     daily summary needs an external cron hitting some endpoint. Out of
     scope here; this sends one summary, on demand, for the current scan."""
-    if not (config.composio_telegram_auth_config_id and config.telegram_bot_token):
+    if not (config.composio_telegram_auth_config_id and config.telegram_bot_token
+            and config.upstash_redis_url and config.upstash_redis_token):
         return
-    settings = load_telegram_settings(st.session_state.user_id)
+    try:
+        settings = load_telegram_settings(config, st.session_state.user_id)
+    except TelegramSettingsStoreError:
+        return  # can't verify -> no button shown, fail closed
     if not (settings.enabled and settings.chat_id and settings.category_enabled("daily_summary")):
         return
 

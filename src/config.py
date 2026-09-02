@@ -22,12 +22,6 @@ _secrets_warning_shown = False
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CLEANUP_LOG_DIR = PROJECT_ROOT / "data" / "cleanup_logs"
 CACHE_DIR = PROJECT_ROOT / "data" / "cache"
-# Per-user Telegram destination/preferences. Local filesystem, same pattern
-# as CACHE_DIR/CLEANUP_LOG_DIR - on Streamlit Community Cloud this is NOT
-# durable across app reboots/redeploys (ephemeral disk). Dev-grade storage;
-# a deployment that needs this to survive reboots needs a real database -
-# see user_settings.py's docstring for the swap point.
-USER_SETTINGS_DIR = PROJECT_ROOT / "data" / "user_settings"
 
 
 class Category:
@@ -267,6 +261,16 @@ class AppConfig:
     telegram_bot_token: str = field(
         default_factory=lambda: _env_str("TELEGRAM_BOT_TOKEN")
     )
+    # Upstash Redis (REST API) - backs per-user Telegram settings storage
+    # (user_settings.py). Durable across Streamlit Cloud redeploys, unlike
+    # the local-disk JSON it replaced. Never stores the bot token or any
+    # Composio secret - only chat_id/enabled/preferences per app user_id.
+    upstash_redis_url: str = field(
+        default_factory=lambda: _env_str("UPSTASH_REDIS_REST_URL")
+    )
+    upstash_redis_token: str = field(
+        default_factory=lambda: _env_str("UPSTASH_REDIS_REST_TOKEN")
+    )
 
     # Gemini
     gemini_api_key: str = field(default_factory=lambda: _env_str("GEMINI_API_KEY"))
@@ -306,5 +310,4 @@ class AppConfig:
 def get_config() -> AppConfig:
     CLEANUP_LOG_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    USER_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
     return AppConfig()
